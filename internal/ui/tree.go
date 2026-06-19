@@ -1,0 +1,378 @@
+package ui
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+// treeNode 是目录树里的一个节点（文件或目录）。
+type treeNode struct {
+	name     string // 显示名（basename）
+	path     string // 绝对路径
+	isDir    bool
+	depth    int
+	expanded bool
+}
+
+// treeSelectFileMsg 在树里选中一个文件时发出，root 转给 viewer 加载。
+type treeSelectFileMsg struct {
+	path string
+}
+
+// TreeModel 中栏：目录树，浏览选中 session 的 cwd 下的文件。
+type TreeModel struct {
+	root   string     // 根目录（取自选中 session 的 cwd）
+	nodes  []treeNode // 当前展开后可见的扁平节点列表
+	cursor int
+	width  int
+	height int
+	offset int // 滚动偏移
+}
+
+func NewTree() TreeModel {
+	return TreeModel{}
+}
+
+// Root returns the current tree root directory for titles/status display.
+func (m TreeModel) Root() string {
+	return m.root
+}
+
+// SetRoot 切换根目录并重建第一层。
+func (m TreeModel) SetRoot(dir string) TreeModel {
+	m.root = dir
+	m.cursor = 0
+	m.offset = 0
+	m.nodes = readDir(dir, 0)
+	return m
+}
+
+// SetSize 设置面板尺寸。
+func (m TreeModel) SetSize(w, h int) TreeModel {
+	m.width = w
+	m.height = h
+	return m
+}
+
+// readDir 读取一个目录的直接子项，返回排序后的节点（目录在前）。
+func readDir(dir string, depth int) []treeNode {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var dirs, files []treeNode
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue // 跳过隐藏文件
+		}
+		n := treeNode{
+			name:  name,
+			path:  filepath.Join(dir, name),
+			isDir: e.IsDir(),
+			depth: depth,
+		}
+		if e.IsDir() {
+			dirs = append(dirs, n)
+		} else {
+			files = append(files, n)
+		}
+	}
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].name < dirs[j].name })
+	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
+	return append(dirs, files...)
+}
+
+type treeIconMode string
+
+const (
+	treeIconModeNerd  treeIconMode = "nerd"
+	treeIconModeASCII treeIconMode = "ascii"
+
+	currentTreeIconMode = treeIconModeNerd
+	treeIndentWidth     = 2
+	treeTwistyWidth     = 2
+	treeIconWidth       = 2
+)
+
+type treeIconKind string
+
+const (
+	iconFolder     treeIconKind = "folder"
+	iconFolderOpen treeIconKind = "folder_open"
+	iconFile       treeIconKind = "file"
+	iconGo         treeIconKind = "go"
+	iconMarkdown   treeIconKind = "markdown"
+	iconJSON       treeIconKind = "json"
+	iconYAML       treeIconKind = "yaml"
+	iconTOML       treeIconKind = "toml"
+	iconShell      treeIconKind = "shell"
+	iconJavaScript treeIconKind = "javascript"
+	iconTypeScript treeIconKind = "typescript"
+	iconHTML       treeIconKind = "html"
+	iconCSS        treeIconKind = "css"
+	iconImage      treeIconKind = "image"
+	iconLock       treeIconKind = "lock"
+	iconDocker     treeIconKind = "docker"
+	iconMake       treeIconKind = "make"
+	iconText       treeIconKind = "text"
+)
+
+func treeLinePrefix(n treeNode) string {
+	indent := strings.Repeat(" ", n.depth*treeIndentWidth)
+	twisty := padCell(treeTwisty(n), treeTwistyWidth)
+	icon := padCell(treeIcon(n), treeIconWidth)
+	return indent + twisty + icon
+}
+
+func treeTwisty(n treeNode) string {
+	if !n.isDir {
+		return ""
+	}
+	if n.expanded {
+		return "⌄"
+	}
+	return "›"
+}
+
+func treeIcon(n treeNode) string {
+	kind := treeIconKindForNode(n)
+	if currentTreeIconMode == treeIconModeASCII {
+		return treeASCIIIcon(kind)
+	}
+	return treeNerdIcon(kind)
+}
+
+func treeIconKindForNode(n treeNode) treeIconKind {
+	if n.isDir {
+		if n.expanded {
+			return iconFolderOpen
+		}
+		return iconFolder
+	}
+
+	name := strings.ToLower(n.name)
+	switch name {
+	case "dockerfile", "docker-compose.yml", "docker-compose.yaml":
+		return iconDocker
+	case "makefile", "gnumakefile":
+		return iconMake
+	case "go.mod", "go.sum", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb":
+		return iconLock
+	case "readme", "readme.md", "claude.md":
+		return iconMarkdown
+	}
+
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".go":
+		return iconGo
+	case ".md", ".markdown":
+		return iconMarkdown
+	case ".json", ".jsonl", ".ndjson":
+		return iconJSON
+	case ".yaml", ".yml":
+		return iconYAML
+	case ".toml", ".ini", ".conf", ".config":
+		return iconTOML
+	case ".sh", ".bash", ".zsh", ".fish":
+		return iconShell
+	case ".js", ".jsx", ".mjs", ".cjs":
+		return iconJavaScript
+	case ".ts", ".tsx", ".mts", ".cts":
+		return iconTypeScript
+	case ".html", ".htm":
+		return iconHTML
+	case ".css", ".scss", ".sass", ".less":
+		return iconCSS
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico":
+		return iconImage
+	case ".txt", ".log":
+		return iconText
+	default:
+		return iconFile
+	}
+}
+
+func treeNerdIcon(kind treeIconKind) string {
+	switch kind {
+	case iconFolder:
+		return ""
+	case iconFolderOpen:
+		return ""
+	case iconGo:
+		return ""
+	case iconMarkdown:
+		return ""
+	case iconJSON:
+		return ""
+	case iconYAML, iconTOML:
+		return ""
+	case iconShell:
+		return ""
+	case iconJavaScript:
+		return ""
+	case iconTypeScript:
+		return ""
+	case iconHTML:
+		return ""
+	case iconCSS:
+		return ""
+	case iconImage:
+		return ""
+	case iconLock:
+		return ""
+	case iconDocker:
+		return ""
+	case iconMake:
+		return ""
+	case iconText:
+		return "󰈙"
+	default:
+		return ""
+	}
+}
+
+func treeASCIIIcon(kind treeIconKind) string {
+	switch kind {
+	case iconFolder, iconFolderOpen:
+		return "d"
+	case iconGo:
+		return "go"
+	case iconMarkdown:
+		return "md"
+	case iconJSON:
+		return "js"
+	case iconYAML:
+		return "yml"
+	case iconTOML:
+		return "tom"
+	case iconShell:
+		return "sh"
+	case iconJavaScript:
+		return "js"
+	case iconTypeScript:
+		return "ts"
+	case iconHTML:
+		return "htm"
+	case iconCSS:
+		return "css"
+	case iconImage:
+		return "img"
+	case iconLock:
+		return "lock"
+	case iconDocker:
+		return "dk"
+	case iconMake:
+		return "mk"
+	case iconText:
+		return "txt"
+	default:
+		return "·"
+	}
+}
+
+// toggle 展开/折叠光标所在的目录节点。
+func (m TreeModel) toggle() TreeModel {
+	if m.cursor < 0 || m.cursor >= len(m.nodes) {
+		return m
+	}
+	node := m.nodes[m.cursor]
+	if !node.isDir {
+		return m
+	}
+	if node.expanded {
+		// 折叠：移除其后所有 depth 更深的节点
+		m.nodes[m.cursor].expanded = false
+		i := m.cursor + 1
+		j := i
+		for j < len(m.nodes) && m.nodes[j].depth > node.depth {
+			j++
+		}
+		m.nodes = append(m.nodes[:i], m.nodes[j:]...)
+	} else {
+		// 展开：在其后插入子节点
+		children := readDir(node.path, node.depth+1)
+		m.nodes[m.cursor].expanded = true
+		tail := append([]treeNode{}, m.nodes[m.cursor+1:]...)
+		m.nodes = append(m.nodes[:m.cursor+1], children...)
+		m.nodes = append(m.nodes, tail...)
+	}
+	return m
+}
+
+// Update 处理按键。
+func (m TreeModel) Update(msg tea.Msg) (TreeModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.nodes)-1 {
+				m.cursor++
+			}
+		case "enter", "right", "l":
+			if m.cursor >= 0 && m.cursor < len(m.nodes) {
+				node := m.nodes[m.cursor]
+				if node.isDir {
+					return m.toggle(), nil
+				}
+				// 文件 → 通知 root 加载到 viewer
+				return m, func() tea.Msg { return treeSelectFileMsg{path: node.path} }
+			}
+		case "left", "h":
+			return m.toggle(), nil
+		}
+		m = m.clampScroll()
+	}
+	return m, nil
+}
+
+// clampScroll 保持光标在可视窗口内。
+func (m TreeModel) clampScroll() TreeModel {
+	if m.height <= 0 {
+		return m
+	}
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+m.height {
+		m.offset = m.cursor - m.height + 1
+	}
+	return m
+}
+
+// View 渲染目录树。
+func (m TreeModel) View() string {
+	if m.root == "" {
+		return "  (在左栏按 Enter 选中会话\n   以此目录为根浏览文件)"
+	}
+	if len(m.nodes) == 0 {
+		return "  (空目录)"
+	}
+	var b strings.Builder
+	end := m.offset + m.height
+	if end > len(m.nodes) {
+		end = len(m.nodes)
+	}
+	for i := m.offset; i < end; i++ {
+		n := m.nodes[i]
+		line := treeLinePrefix(n) + n.name
+		if i == m.cursor {
+			line = truncateCell(line, m.width-2)
+			line = treeCursorStyle.Render("  " + line)
+		} else {
+			line = truncateCell(line, m.width-2)
+			line = "  " + line
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
