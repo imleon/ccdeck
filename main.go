@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"cc-session/internal/session"
-	"cc-session/internal/ui"
+	"cc-sidecar/internal/session"
+	"cc-sidecar/internal/ui"
 )
 
 type config struct {

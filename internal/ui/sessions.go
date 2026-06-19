@@ -6,7 +6,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 
-	"cc-session/internal/session"
+	"cc-sidecar/internal/session"
 )
 
 // sessionChosenMsg is emitted when Enter is pressed on a selected session.

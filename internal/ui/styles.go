@@ -45,6 +45,11 @@ var treeCursorStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("63")).
 	Inline(true)
 
+var treeOpenedFileStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("117")).
+	Bold(true).
+	Inline(true)
+
 var lineNumberStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("244"))
 

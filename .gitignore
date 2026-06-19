@@ -2,7 +2,6 @@
 .claude/settings.local.json
 
 # Build outputs
-/cc-session
 /cc-sidecar
 *.exe
 *.test

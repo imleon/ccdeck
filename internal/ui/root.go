@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"cc-session/internal/session"
+	"cc-sidecar/internal/session"
 )
 
 // focus 表示当前键盘焦点所在的面板。
@@ -187,8 +187,8 @@ func (m RootModel) render() string {
 	})
 	mid := renderPanel(Panel{
 		Title:   "Explorer",
-		Body:    m.tree.View(),
-		Footer:  []string{defaultString(m.tree.Root(), "no project"), "Enter open", "h/l fold"},
+		Body:    m.tree.View(m.viewer.Path()),
+		Footer:  []string{defaultString(m.tree.Root(), "no project"), "l open", "h parent/collapse"},
 		Focused: m.focus == focusTree,
 		Width:   tw,
 		Height:  bodyH,
@@ -216,13 +216,14 @@ func (m RootModel) render() string {
 }
 
 func (m RootModel) helpView() string {
-	help := `cc-session — 快捷键
+	help := `cc-sidecar — 快捷键
 
   Tab / Shift+Tab   在三个面板间切换焦点
   ↑ / ↓ / j / k     在当前面板内移动
   /                 在 session 列表中过滤
+  Enter / l / →     目录树面板：展开/折叠目录，或在 viewer 中打开文件
+  h / ←             目录树面板：折叠当前目录；已折叠则移动到父目录
   Enter             session 面板：显示 /resume 命令并把目录树切到该会话目录
-                    目录树面板：展开/折叠目录，或在 viewer 中打开文件
   ?                 关闭本帮助
   q / Ctrl+C        退出
 

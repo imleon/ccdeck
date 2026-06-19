@@ -67,8 +67,8 @@ func readDir(dir string, depth int) []treeNode {
 	var dirs, files []treeNode
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".") {
-			continue // 跳过隐藏文件
+		if name == ".git" {
+			continue // 隐藏 Git 元数据目录，保留其它 dot 项可见。
 		}
 		n := treeNode{
 			name:  name,
@@ -278,21 +278,14 @@ func treeASCIIIcon(kind treeIconKind) string {
 // toggle 展开/折叠光标所在的目录节点。
 func (m TreeModel) toggle() TreeModel {
 	if m.cursor < 0 || m.cursor >= len(m.nodes) {
-		return m
+		return m.clampScroll()
 	}
 	node := m.nodes[m.cursor]
 	if !node.isDir {
-		return m
+		return m.clampScroll()
 	}
 	if node.expanded {
-		// 折叠：移除其后所有 depth 更深的节点
-		m.nodes[m.cursor].expanded = false
-		i := m.cursor + 1
-		j := i
-		for j < len(m.nodes) && m.nodes[j].depth > node.depth {
-			j++
-		}
-		m.nodes = append(m.nodes[:i], m.nodes[j:]...)
+		m = m.collapseCurrentDir()
 	} else {
 		// 展开：在其后插入子节点
 		children := readDir(node.path, node.depth+1)
@@ -301,7 +294,42 @@ func (m TreeModel) toggle() TreeModel {
 		m.nodes = append(m.nodes[:m.cursor+1], children...)
 		m.nodes = append(m.nodes, tail...)
 	}
+	return m.clampScroll()
+}
+
+// collapseCurrentDir 折叠光标所在的已展开目录。
+func (m TreeModel) collapseCurrentDir() TreeModel {
+	node := m.nodes[m.cursor]
+	m.nodes[m.cursor].expanded = false
+	i := m.cursor + 1
+	j := i
+	for j < len(m.nodes) && m.nodes[j].depth > node.depth {
+		j++
+	}
+	m.nodes = append(m.nodes[:i], m.nodes[j:]...)
 	return m
+}
+
+// collapseOrMoveToParent 实现左键语义：展开目录则折叠，否则回到父目录。
+func (m TreeModel) collapseOrMoveToParent() TreeModel {
+	if m.cursor < 0 || m.cursor >= len(m.nodes) {
+		return m.clampScroll()
+	}
+	node := m.nodes[m.cursor]
+	if node.isDir && node.expanded {
+		return m.collapseCurrentDir().clampScroll()
+	}
+	if node.depth == 0 {
+		return m.clampScroll()
+	}
+	parentDepth := node.depth - 1
+	for i := m.cursor - 1; i >= 0; i-- {
+		if m.nodes[i].isDir && m.nodes[i].depth == parentDepth {
+			m.cursor = i
+			break
+		}
+	}
+	return m.clampScroll()
 }
 
 // Update 处理按键。
@@ -327,17 +355,40 @@ func (m TreeModel) Update(msg tea.Msg) (TreeModel, tea.Cmd) {
 				return m, func() tea.Msg { return treeSelectFileMsg{path: node.path} }
 			}
 		case "left", "h":
-			return m.toggle(), nil
+			return m.collapseOrMoveToParent(), nil
 		}
 		m = m.clampScroll()
 	}
 	return m, nil
 }
 
-// clampScroll 保持光标在可视窗口内。
+// clampScroll 保持光标和滚动偏移在合法可视范围内。
 func (m TreeModel) clampScroll() TreeModel {
-	if m.height <= 0 {
+	if len(m.nodes) == 0 {
+		m.cursor = 0
+		m.offset = 0
 		return m
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.nodes) {
+		m.cursor = len(m.nodes) - 1
+	}
+	if m.height <= 0 {
+		m.offset = 0
+		return m
+	}
+
+	maxOffset := len(m.nodes) - m.height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.offset > maxOffset {
+		m.offset = maxOffset
+	}
+	if m.offset < 0 {
+		m.offset = 0
 	}
 	if m.cursor < m.offset {
 		m.offset = m.cursor
@@ -349,7 +400,7 @@ func (m TreeModel) clampScroll() TreeModel {
 }
 
 // View 渲染目录树。
-func (m TreeModel) View() string {
+func (m TreeModel) View(openedPath string) string {
 	if m.root == "" {
 		return "  (在左栏按 Enter 选中会话\n   以此目录为根浏览文件)"
 	}
@@ -357,6 +408,10 @@ func (m TreeModel) View() string {
 		return "  (空目录)"
 	}
 	var b strings.Builder
+	cleanOpenedPath := ""
+	if openedPath != "" {
+		cleanOpenedPath = filepath.Clean(openedPath)
+	}
 	end := m.offset + m.height
 	if end > len(m.nodes) {
 		end = len(m.nodes)
@@ -364,12 +419,14 @@ func (m TreeModel) View() string {
 	for i := m.offset; i < end; i++ {
 		n := m.nodes[i]
 		line := treeLinePrefix(n) + n.name
-		if i == m.cursor {
-			line = truncateCell(line, m.width-2)
-			line = treeCursorStyle.Render("  " + line)
-		} else {
-			line = truncateCell(line, m.width-2)
-			line = "  " + line
+		line = truncateCell(line, m.width-1)
+		line = " " + line
+		isCursor := i == m.cursor
+		isOpened := cleanOpenedPath != "" && !n.isDir && filepath.Clean(n.path) == cleanOpenedPath
+		if isCursor {
+			line = treeCursorStyle.Render(line)
+		} else if isOpened {
+			line = treeOpenedFileStyle.Render(line)
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')

@@ -1,4 +1,4 @@
-module cc-session
+module cc-sidecar
 
 go 1.26.4
 

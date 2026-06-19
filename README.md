@@ -1,6 +1,6 @@
-# cc-session
+# cc-sidecar
 
-`cc-session` is a terminal UI for browsing local Claude Code sessions and their
+`cc-sidecar` is a terminal UI for browsing local Claude Code sessions and their
 working directories without putting session lists or file browsing output into a
 Claude Code conversation.
 
@@ -20,7 +20,7 @@ This project uses Go 1.26+ and Bubble Tea v2.
 ```bash
 /usr/local/go/bin/go mod tidy
 /usr/local/go/bin/go test ./...
-/usr/local/go/bin/go build -buildvcs=false -o cc-session .
+/usr/local/go/bin/go build -buildvcs=false -o cc-sidecar .
 ```
 
 `-buildvcs=false` is used because this directory may not be inside a complete
@@ -29,16 +29,16 @@ Git checkout, and recent Go versions try to stamp VCS metadata by default.
 ## Run
 
 ```bash
-./cc-session
+./cc-sidecar
 ```
 
 Useful flags:
 
 ```bash
-./cc-session --help
-./cc-session --projects-dir "$HOME/.claude/projects"
-./cc-session --root /data00/home/gaolei.veew/sourcecode/cc-session
-./cc-session --no-alt-screen
+./cc-sidecar --help
+./cc-sidecar --projects-dir "$HOME/.claude/projects"
+./cc-sidecar --root /data00/home/gaolei.veew/sourcecode/cc-sidecar
+./cc-sidecar --no-alt-screen
 ```
 
 ### Flags
@@ -71,7 +71,7 @@ Tree panel:
 
 - `↑` / `↓` or `j` / `k`: move selection
 - `Enter` / `l` / `→`: expand a directory or open a file in the viewer
-- `h` / `←`: collapse a directory
+- `h` / `←`: collapse the current directory; if it is already collapsed, move to its parent directory
 - Uses fixed-width Nerd Font icons for folders and common file types. If icons render as squares, switch the terminal font to a Nerd Font; ASCII fallback support is kept in code for a future flag.
 
 Viewer panel:
