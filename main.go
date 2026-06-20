@@ -30,15 +30,17 @@ func main() {
 		}
 	}
 
-	metas, err := session.Scan(cfg.projectsDir)
+	source := session.NewFilesystemSessionSource(cfg.projectsDir)
+	metas, err := source.List()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "扫描会话失败:", err)
 		os.Exit(1)
 	}
 
 	p := tea.NewProgram(ui.NewRoot(metas, ui.Options{
-		InitialRoot: cfg.initialRoot,
-		AltScreen:   cfg.altScreen,
+		InitialRoot:   cfg.initialRoot,
+		AltScreen:     cfg.altScreen,
+		SessionSource: source,
 	}))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

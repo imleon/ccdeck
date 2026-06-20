@@ -77,38 +77,52 @@ func (m ViewerModel) SetSize(w, h int) ViewerModel {
 }
 
 type loadFileMsg struct {
-	path      string
-	content   string
-	err       error
-	state     viewerState
-	message   string
-	lineCount int
+	path           string
+	content        string
+	err            error
+	state          viewerState
+	message        string
+	lineCount      int
+	preserveScroll bool // true 表示自动刷新：渲染后保留原滚动位置，不回到顶部
 }
 
+// LoadFile 读取并渲染文件，渲染后滚动到顶部。用于用户主动选中文件。
 func (m ViewerModel) LoadFile(path string) tea.Cmd {
+	return loadFileCmd(path, false)
+}
+
+// Refresh 重新读取当前文件并保留滚动位置。用于自动刷新轮询；无文件时返回 nil。
+func (m ViewerModel) Refresh() tea.Cmd {
+	if m.path == "" {
+		return nil
+	}
+	return loadFileCmd(m.path, true)
+}
+
+func loadFileCmd(path string, preserveScroll bool) tea.Cmd {
 	return func() tea.Msg {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			message := "无法读取: " + err.Error()
-			return loadFileMsg{path: path, err: err, state: viewerReadError, message: message, content: errorStyle.Render(message)}
+			return loadFileMsg{path: path, err: err, state: viewerReadError, message: message, content: errorStyle.Render(message), preserveScroll: preserveScroll}
 		}
 		if len(data) == 0 {
 			message := "空文件"
-			return loadFileMsg{path: path, state: viewerEmpty, message: message, content: warningStyle.Render(message)}
+			return loadFileMsg{path: path, state: viewerEmpty, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
 		}
 		if bytes.Contains(data, []byte{0}) {
 			message := "二进制文件，未预览"
-			return loadFileMsg{path: path, state: viewerBinary, message: message, content: warningStyle.Render(message)}
+			return loadFileMsg{path: path, state: viewerBinary, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
 		}
 		if len(data) > maxPreviewBytes {
 			message := fmt.Sprintf("文件超过 %d KiB，未高亮预览", maxPreviewBytes/1024)
-			return loadFileMsg{path: path, state: viewerTooLarge, message: message, content: warningStyle.Render(message)}
+			return loadFileMsg{path: path, state: viewerTooLarge, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
 		}
 
 		content := string(data)
 		lineCount := countLines(content)
 		rendered := highlightContent(path, content)
-		return loadFileMsg{path: path, content: rendered, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines", lineCount)}
+		return loadFileMsg{path: path, content: rendered, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines", lineCount), preserveScroll: preserveScroll}
 	}
 }
 
@@ -162,8 +176,15 @@ func (m ViewerModel) Update(msg tea.Msg) (ViewerModel, tea.Cmd) {
 		} else {
 			m.vp.LeftGutterFunc = nil
 		}
-		m.vp.SetContent(msg.content)
-		m.vp.GotoTop()
+		if msg.preserveScroll {
+			// 自动刷新：保留原滚动位置。内容变短时 SetYOffset 内部会自行裁剪。
+			yoff := m.vp.YOffset()
+			m.vp.SetContent(msg.content)
+			m.vp.SetYOffset(yoff)
+		} else {
+			m.vp.SetContent(msg.content)
+			m.vp.GotoTop()
+		}
 		return m, nil
 	case tea.KeyPressMsg:
 		if msg.String() == "w" {

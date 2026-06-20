@@ -25,6 +25,45 @@ func TestViewerDefaultsToNoSoftWrap(t *testing.T) {
 	}
 }
 
+func TestViewerLoadGoesToTopRefreshKeepsScroll(t *testing.T) {
+	content := ""
+	for range 200 {
+		content += "line\n"
+	}
+
+	viewer := NewViewer().SetSize(40, 10)
+
+	// 首次加载：应回到顶部。
+	var m ViewerModel = viewer
+	m, _ = m.Update(loadFileMsg{
+		path:      "/tmp/a.txt",
+		content:   content,
+		state:     viewerLoaded,
+		lineCount: 200,
+	})
+	if got := m.vp.YOffset(); got != 0 {
+		t.Fatalf("first load should be at top, YOffset = %d, want 0", got)
+	}
+
+	// 用户向下滚动。
+	m.vp.SetYOffset(50)
+	if got := m.vp.YOffset(); got != 50 {
+		t.Fatalf("setup scroll failed, YOffset = %d, want 50", got)
+	}
+
+	// 自动刷新：内容更新但滚动位置应保留。
+	m, _ = m.Update(loadFileMsg{
+		path:           "/tmp/a.txt",
+		content:        content + "more\n",
+		state:          viewerLoaded,
+		lineCount:      201,
+		preserveScroll: true,
+	})
+	if got := m.vp.YOffset(); got != 50 {
+		t.Fatalf("refresh should preserve scroll, YOffset = %d, want 50", got)
+	}
+}
+
 func TestViewerTogglesSoftWrapWithW(t *testing.T) {
 	viewer := NewViewer()
 

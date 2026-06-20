@@ -94,6 +94,62 @@ func (m SessionsModel) CurrentCWD() string {
 	return ""
 }
 
+// SetSessions replaces the session data while preserving filter, expanded
+// groups, and the current selection when the same session/group still exists.
+func (m SessionsModel) SetSessions(sessions []session.Session) SessionsModel {
+	oldOffset := m.offset
+	oldCursor := m.cursor
+	expanded := make(map[string]bool, len(m.groups))
+	for _, g := range m.groups {
+		expanded[g.cwd] = g.expanded
+	}
+
+	selectedSessionKey := ""
+	selectedGroupCWD := ""
+	if row, ok := m.currentRow(); ok {
+		switch row.kind {
+		case sessionRowSession:
+			if s, ok := m.sessionForRow(row); ok {
+				selectedSessionKey = sessionKey(s)
+				selectedGroupCWD = sessionProjectDir(s)
+			}
+		case sessionRowGroup:
+			if g, ok := m.groupForRow(row); ok {
+				selectedGroupCWD = g.cwd
+			}
+		}
+	}
+
+	m.groups = groupSessionGroupsByCWD(sessions)
+	for i := range m.groups {
+		if wasExpanded, ok := expanded[m.groups[i].cwd]; ok {
+			m.groups[i].expanded = wasExpanded
+		}
+	}
+
+	m.cursor = oldCursor
+	m.offset = oldOffset
+	m = m.rebuildRows()
+
+	if selectedSessionKey != "" {
+		if idx, ok := m.findSessionRowByKey(selectedSessionKey); ok {
+			m.cursor = idx
+			m.offset = oldOffset
+			return m.clampScroll()
+		}
+	}
+	if selectedGroupCWD != "" {
+		if idx, ok := m.findGroupRowByCWD(selectedGroupCWD); ok {
+			m.cursor = idx
+			m.offset = oldOffset
+			return m.clampScroll()
+		}
+	}
+	m.cursor = oldCursor
+	m.offset = oldOffset
+	return m.clampScroll()
+}
+
 // Count returns the total number of sessions, excluding project headers.
 func (m SessionsModel) Count() int {
 	count := 0
@@ -382,6 +438,37 @@ func (m SessionsModel) sessionForRow(row sessionRow) (session.Session, bool) {
 		return session.Session{}, false
 	}
 	return group.sessions[row.sessionIndex], true
+}
+
+func sessionKey(s session.Session) string {
+	if s.Path != "" {
+		return s.Path
+	}
+	return s.ID
+}
+
+func (m SessionsModel) findSessionRowByKey(key string) (int, bool) {
+	for i, row := range m.rows {
+		if row.kind != sessionRowSession {
+			continue
+		}
+		if s, ok := m.sessionForRow(row); ok && sessionKey(s) == key {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func (m SessionsModel) findGroupRowByCWD(cwd string) (int, bool) {
+	for i, row := range m.rows {
+		if row.kind != sessionRowGroup {
+			continue
+		}
+		if g, ok := m.groupForRow(row); ok && g.cwd == cwd {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func (m SessionsModel) groupHeaderIndex(groupIndex int) int {

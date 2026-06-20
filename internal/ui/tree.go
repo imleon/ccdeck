@@ -51,6 +51,60 @@ func (m TreeModel) SetRoot(dir string) TreeModel {
 	return m
 }
 
+// Refresh 重扫当前根目录，反映磁盘上的文件增删，同时保留已展开的目录、
+// 光标所在节点和滚动位置。用于自动刷新轮询。
+func (m TreeModel) Refresh() TreeModel {
+	if m.root == "" {
+		return m
+	}
+
+	// 记录当前展开的目录 path 与光标所在节点 path。
+	expanded := make(map[string]bool, len(m.nodes))
+	for _, n := range m.nodes {
+		if n.isDir && n.expanded {
+			expanded[n.path] = true
+		}
+	}
+	cursorPath := ""
+	if m.cursor >= 0 && m.cursor < len(m.nodes) {
+		cursorPath = m.nodes[m.cursor].path
+	}
+
+	// 从根重建扁平树，递归展开此前展开的目录。
+	m.nodes = buildVisibleNodes(m.root, 0, expanded)
+
+	// 把光标定位回原节点；找不到则交给 clampScroll 兜底。
+	if cursorPath != "" {
+		for i, n := range m.nodes {
+			if n.path == cursorPath {
+				m.cursor = i
+				break
+			}
+		}
+	}
+	return m.clampScroll()
+}
+
+// buildVisibleNodes 从 dir 递归构建可见的扁平节点列表：目录默认折叠，
+// 仅当其 path 在 expanded 集合中时展开并递归其子项。
+func buildVisibleNodes(dir string, depth int, expanded map[string]bool) []treeNode {
+	nodes := readDir(dir, depth)
+	if len(expanded) == 0 {
+		return nodes
+	}
+	result := make([]treeNode, 0, len(nodes))
+	for _, n := range nodes {
+		if n.isDir && expanded[n.path] {
+			n.expanded = true
+			result = append(result, n)
+			result = append(result, buildVisibleNodes(n.path, depth+1, expanded)...)
+			continue
+		}
+		result = append(result, n)
+	}
+	return result
+}
+
 // SetSize 设置面板尺寸。
 func (m TreeModel) SetSize(w, h int) TreeModel {
 	m.width = w

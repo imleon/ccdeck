@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -19,10 +20,21 @@ const (
 	focusViewer
 )
 
+const defaultSessionRefreshInterval = time.Second
+
 // Options controls startup behavior for the TUI.
 type Options struct {
-	InitialRoot string
-	AltScreen   bool
+	InitialRoot     string
+	AltScreen       bool
+	SessionSource   session.Source
+	RefreshInterval time.Duration
+}
+
+type sessionsRefreshTickMsg struct{}
+
+type sessionsRefreshedMsg struct {
+	sessions []session.Session
+	err      error
 }
 
 // RootModel 组合三个子面板，负责布局、焦点切换和全局按键。
@@ -34,6 +46,10 @@ type RootModel struct {
 	focus  focus
 	width  int
 	height int
+
+	sessionSource   session.Source
+	refreshInterval time.Duration
+	refreshInFlight bool
 
 	altScreen bool
 	showHelp  bool
@@ -51,17 +67,50 @@ func NewRoot(sessions []session.Session, opts Options) RootModel {
 	if initialRoot != "" {
 		treeModel = treeModel.SetRoot(initialRoot)
 	}
+	refreshInterval := opts.RefreshInterval
+	if refreshInterval <= 0 {
+		refreshInterval = defaultSessionRefreshInterval
+	}
 	return RootModel{
-		sessions:  sessionsModel,
-		tree:      treeModel,
-		viewer:    NewViewer(),
-		focus:     focusSessions,
-		altScreen: opts.AltScreen,
+		sessions:        sessionsModel,
+		tree:            treeModel,
+		viewer:          NewViewer(),
+		focus:           focusSessions,
+		sessionSource:   opts.SessionSource,
+		refreshInterval: refreshInterval,
+		altScreen:       opts.AltScreen,
 	}
 }
 
 func (m RootModel) Init() tea.Cmd {
-	return nil
+	return m.sessionRefreshTickCmd()
+}
+
+func (m RootModel) sessionRefreshTickCmd() tea.Cmd {
+	if m.refreshInterval <= 0 {
+		return nil
+	}
+	return tea.Tick(m.refreshInterval, func(time.Time) tea.Msg {
+		return sessionsRefreshTickMsg{}
+	})
+}
+
+func scanSessionsCmd(source session.Source) tea.Cmd {
+	if source == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		sessions, err := source.List()
+		return sessionsRefreshedMsg{sessions: sessions, err: err}
+	}
+}
+
+func (m RootModel) startSessionsRefresh() (RootModel, tea.Cmd) {
+	if m.sessionSource == nil || m.refreshInFlight {
+		return m, nil
+	}
+	m.refreshInFlight = true
+	return m, scanSessionsCmd(m.sessionSource)
 }
 
 func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -86,9 +135,35 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			m.focus = (m.focus + 2) % 3
 			return m, nil
+		case "r":
+			var cmd tea.Cmd
+			m, cmd = m.startSessionsRefresh()
+			return m, cmd
 		}
 		// 其余按键下发给当前焦点面板
 		return m.updateFocused(msg)
+
+	case sessionsRefreshTickMsg:
+		cmds := []tea.Cmd{m.sessionRefreshTickCmd()}
+		var refreshCmd tea.Cmd
+		m, refreshCmd = m.startSessionsRefresh()
+		if refreshCmd != nil {
+			cmds = append(cmds, refreshCmd)
+		}
+		// 同一节拍顺带刷新中栏目录树与右栏文件：tree 重扫为同步内存操作，
+		// viewer 重新读盘为异步 cmd。三栏共享这一条 1s 心跳。
+		m.tree = m.tree.Refresh()
+		if viewerCmd := m.viewer.Refresh(); viewerCmd != nil {
+			cmds = append(cmds, viewerCmd)
+		}
+		return m, tea.Batch(cmds...)
+
+	case sessionsRefreshedMsg:
+		m.refreshInFlight = false
+		if msg.err == nil {
+			m.sessions = m.sessions.SetSessions(msg.sessions)
+		}
+		return m, nil
 
 	case treeSelectFileMsg:
 		// 树选中文件 → 让 viewer 加载
@@ -171,7 +246,7 @@ func (m RootModel) render() string {
 	left := renderPanel(Panel{
 		Title:   fmt.Sprintf("Sessions (%d)", m.sessions.Count()),
 		Body:    m.sessions.View(),
-		Footer:  []string{"/ filter", "Enter/→ open", "← project/collapse"},
+		Footer:  []string{"/ filter", "r refresh", "Enter/→ open", "← project/collapse"},
 		Focused: m.focus == focusSessions,
 		Width:   lw,
 		Height:  bodyH,
@@ -213,6 +288,7 @@ func (m RootModel) helpView() string {
   Tab / Shift+Tab   在三个面板间切换焦点
   ↑ / ↓ / j / k     在当前面板内移动
   /                 在 session 列表中过滤
+  r                 刷新 session 列表
   Enter / l / →     目录树面板：展开/折叠目录，或在 viewer 中打开文件
   h / ←             目录树面板：折叠当前目录；已折叠则移动到父目录
   Enter             session 面板：显示 /resume 命令并把目录树切到该会话目录
@@ -272,9 +348,9 @@ func (m RootModel) statusText() string {
 	switch m.focus {
 	case focusSessions:
 		if title := m.sessions.SelectedTitle(); title != "" {
-			return fmt.Sprintf("Focus: Sessions · %s · / 过滤 · Enter 选择 · Tab 切换 · q 退出", title)
+			return fmt.Sprintf("Focus: Sessions · %s · / 过滤 · r 刷新 · Enter 选择 · Tab 切换 · q 退出", title)
 		}
-		return "Focus: Sessions · / 过滤 · Enter 选择 · Tab 切换 · q 退出"
+		return "Focus: Sessions · / 过滤 · r 刷新 · Enter 选择 · Tab 切换 · q 退出"
 	case focusTree:
 		return "Focus: Tree · ↑/↓ 移动 · Enter/l 展开或打开 · h 折叠 · Tab 切换 · q 退出"
 	case focusViewer:

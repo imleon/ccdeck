@@ -29,6 +29,44 @@ type Session struct {
 	ModTime    time.Time // file mtime, used for sort order
 }
 
+// Source lists Claude Code sessions. FilesystemSource is the current
+// implementation; the interface keeps the UI independent from where session
+// metadata comes from.
+type Source interface {
+	List() ([]Session, error)
+}
+
+type fileFingerprint struct {
+	modTime time.Time
+	size    int64
+}
+
+type cachedSession struct {
+	session     Session
+	fingerprint fileFingerprint
+}
+
+// FilesystemSessionSource lists sessions from the Claude Code projects
+// directory and reuses parsed metadata for unchanged transcript files.
+type FilesystemSessionSource struct {
+	projectsDir string
+	cache       map[string]cachedSession
+	parse       func(string) (Session, error)
+}
+
+// NewFilesystemSessionSource creates a cached session source backed by the
+// Claude Code projects directory.
+func NewFilesystemSessionSource(projectsDir string) *FilesystemSessionSource {
+	if abs, err := filepath.Abs(projectsDir); err == nil {
+		projectsDir = abs
+	}
+	return &FilesystemSessionSource{
+		projectsDir: projectsDir,
+		cache:       make(map[string]cachedSession),
+		parse:       parseFile,
+	}
+}
+
 // rawRecord is a partial view of a transcript line. Only fields we consume are
 // declared; everything else is ignored by encoding/json.
 type rawRecord struct {
@@ -62,18 +100,32 @@ func ProjectsDir() string {
 // first. It deliberately skips <proj>/<id>/subagents/*.jsonl — those are
 // sub-agent transcripts, not user-facing sessions.
 func Scan(projectsDir string) ([]Session, error) {
-	var sessions []Session
+	return NewFilesystemSessionSource(projectsDir).List()
+}
 
-	entries, err := os.ReadDir(projectsDir)
+// List walks the projects directory and returns all top-level sessions, newest
+// first. Unchanged transcript files reuse cached metadata; new or changed files
+// are parsed with the same rules as Scan.
+func (s *FilesystemSessionSource) List() ([]Session, error) {
+	if s.parse == nil {
+		s.parse = parseFile
+	}
+	if s.cache == nil {
+		s.cache = make(map[string]cachedSession)
+	}
+
+	entries, err := os.ReadDir(s.projectsDir)
 	if err != nil {
 		return nil, err
 	}
 
+	seen := make(map[string]bool)
+	var sessions []Session
 	for _, projEntry := range entries {
 		if !projEntry.IsDir() {
 			continue
 		}
-		projPath := filepath.Join(projectsDir, projEntry.Name())
+		projPath := filepath.Join(s.projectsDir, projEntry.Name())
 		files, err := os.ReadDir(projPath)
 		if err != nil {
 			continue // unreadable project dir — skip, don't fail the whole scan
@@ -84,12 +136,36 @@ func Scan(projectsDir string) ([]Session, error) {
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 				continue
 			}
-			full := filepath.Join(projPath, f.Name())
-			s, err := parseFile(full)
+			info, err := f.Info()
 			if err != nil {
-				continue // a single bad file shouldn't sink the list
+				continue
 			}
-			sessions = append(sessions, s)
+			full := filepath.Join(projPath, f.Name())
+			seen[full] = true
+			fp := fileFingerprint{modTime: info.ModTime(), size: info.Size()}
+			if cached, ok := s.cache[full]; ok && cached.fingerprint == fp {
+				sessions = append(sessions, cached.session)
+				continue
+			}
+
+			parsed, err := s.parse(full)
+			if err != nil {
+				// A single bad file shouldn't sink the list. If we have a previous
+				// parse result, keep it to avoid flicker during transient writes.
+				if cached, ok := s.cache[full]; ok {
+					sessions = append(sessions, cached.session)
+				}
+				continue
+			}
+			parsed.ModTime = fp.modTime
+			s.cache[full] = cachedSession{session: parsed, fingerprint: fp}
+			sessions = append(sessions, parsed)
+		}
+	}
+
+	for path := range s.cache {
+		if !seen[path] {
+			delete(s.cache, path)
 		}
 	}
 
