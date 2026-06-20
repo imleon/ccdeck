@@ -135,15 +135,9 @@ func (m *RootModel) layout() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	// 预留：底部状态行 1；每栏边框 2；每栏内部标题 1。
-	bodyH := m.height - 2
-	if bodyH < 3 {
-		bodyH = 3
-	}
-	contentH := bodyH - 3
-	if contentH < 1 {
-		contentH = 1
-	}
+	// 预留：底部状态行 1；每栏边框 2；每栏内部标题和 footer 各 1。
+	bodyH := max(m.height-2, 3)
+	contentH := max(panelContentHeight(bodyH)-2, 1)
 	// 三栏宽度：左 28% 中 28% 右 44%（减去边框占用）
 	lw := m.width * 28 / 100
 	tw := m.width * 28 / 100
@@ -169,10 +163,7 @@ func (m RootModel) render() string {
 		return m.helpView()
 	}
 
-	bodyH := m.height - 2
-	if bodyH < 3 {
-		bodyH = 3
-	}
+	bodyH := max(m.height-2, 3)
 	lw := m.width * 28 / 100
 	tw := m.width * 28 / 100
 	vw := m.width - lw - tw
@@ -180,7 +171,7 @@ func (m RootModel) render() string {
 	left := renderPanel(Panel{
 		Title:   fmt.Sprintf("Sessions (%d)", m.sessions.Count()),
 		Body:    m.sessions.View(),
-		Footer:  []string{"/ filter", "Enter select"},
+		Footer:  []string{"/ filter", "Enter/→ open", "← project/collapse"},
 		Focused: m.focus == focusSessions,
 		Width:   lw,
 		Height:  bodyH,
@@ -188,12 +179,12 @@ func (m RootModel) render() string {
 	mid := renderPanel(Panel{
 		Title:   "Explorer",
 		Body:    m.tree.View(m.viewer.Path()),
-		Footer:  []string{defaultString(m.tree.Root(), "no project"), "l open", "h parent/collapse"},
+		Footer:  []string{defaultString(m.tree.Root(), "no project")},
 		Focused: m.focus == focusTree,
 		Width:   tw,
 		Height:  bodyH,
 	})
-	viewerFooter := []string{"↑/↓ scroll"}
+	viewerFooter := []string{m.viewer.WrapStatus(), "w wrap", "↑/↓ scroll"}
 	if rel := m.viewerRelativePath(); rel != "" {
 		viewerFooter = append([]string{rel}, viewerFooter...)
 	}
@@ -201,12 +192,13 @@ func (m RootModel) render() string {
 		viewerFooter = append([]string{status}, viewerFooter...)
 	}
 	right := renderPanel(Panel{
-		Title:   "Viewer: " + defaultString(filepath.Base(m.viewer.Path()), "(none)"),
+		Title:   viewerTitle(m.viewer.Path()),
 		Body:    m.viewer.View(),
 		Footer:  viewerFooter,
 		Focused: m.focus == focusViewer,
 		Width:   vw,
 		Height:  bodyH,
+		NoWrap:  true,
 	})
 
 	body := joinHorizontal(left, mid, right)
@@ -224,6 +216,7 @@ func (m RootModel) helpView() string {
   Enter / l / →     目录树面板：展开/折叠目录，或在 viewer 中打开文件
   h / ←             目录树面板：折叠当前目录；已折叠则移动到父目录
   Enter             session 面板：显示 /resume 命令并把目录树切到该会话目录
+  w                 Viewer 面板：切换不换行 / 按面板宽度换行
   ?                 关闭本帮助
   q / Ctrl+C        退出
 
@@ -236,6 +229,13 @@ func panelWithTitle(title, body string) string {
 		title = "(none)"
 	}
 	return joinVertical(panelTitleStyle.Render(title), body)
+}
+
+func viewerTitle(path string) string {
+	if path == "" {
+		return "(none)"
+	}
+	return filepath.Base(path)
 }
 
 func shortPath(path string) string {
@@ -283,7 +283,7 @@ func (m RootModel) statusText() string {
 			if viewerStatus := m.viewer.Status(); viewerStatus != "" {
 				status += " · " + viewerStatus
 			}
-			return status + " · ↑/↓ 滚动 · Tab 切换 · q 退出"
+			return status + " · " + m.viewer.WrapStatus() + " · w 切换换行 · ↑/↓ 滚动 · Tab 切换 · q 退出"
 		}
 		return "Focus: Viewer · ↑/↓ 滚动 · Tab 切换 · q 退出"
 	default:

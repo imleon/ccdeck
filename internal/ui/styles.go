@@ -35,6 +35,46 @@ var panelFooterStyle = lipgloss.NewStyle().
 var panelFooterActiveStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("117"))
 
+var sessionGroupHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("244"))
+
+var sessionSelectedGroupHeaderStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("229")).
+	Background(focusedBorderColor).
+	Inline(true)
+
+var sessionTitleStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("252"))
+
+var sessionSelectedTitleStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("229")).
+	Background(focusedBorderColor).
+	Inline(true)
+
+var sessionAgeStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("240"))
+
+var sessionSelectedAgeStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("250")).
+	Background(focusedBorderColor).
+	Inline(true)
+
+var sessionSelectedFillStyle = lipgloss.NewStyle().
+	Background(focusedBorderColor).
+	Inline(true)
+
+var sessionDescStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("244"))
+
+var sessionSelectedDescStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("250")).
+	Background(focusedBorderColor).
+	Inline(true)
+
+var sessionFilterStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("117"))
+
 var helpBoxStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
 	Padding(1, 2).

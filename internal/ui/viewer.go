@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/chroma/v2/quick"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const maxPreviewBytes = 512 * 1024
@@ -37,7 +38,9 @@ type ViewerModel struct {
 }
 
 func NewViewer() ViewerModel {
-	return ViewerModel{vp: viewport.New(), state: viewerIdle}
+	vp := viewport.New()
+	vp.SoftWrap = false
+	return ViewerModel{vp: vp, state: viewerIdle}
 }
 
 // Path returns the currently loaded file path for titles/status display.
@@ -48,6 +51,17 @@ func (m ViewerModel) Path() string {
 // Status returns a short human-readable state for status lines.
 func (m ViewerModel) Status() string {
 	return m.message
+}
+
+func (m ViewerModel) SoftWrap() bool {
+	return m.vp.SoftWrap
+}
+
+func (m ViewerModel) WrapStatus() string {
+	if m.vp.SoftWrap {
+		return "wrap: panel"
+	}
+	return "wrap: off"
 }
 
 func (m ViewerModel) SetSize(w, h int) ViewerModel {
@@ -152,6 +166,14 @@ func (m ViewerModel) Update(msg tea.Msg) (ViewerModel, tea.Cmd) {
 		m.vp.GotoTop()
 		return m, nil
 	case tea.KeyPressMsg:
+		if msg.String() == "w" {
+			if !m.vp.SoftWrap {
+				m.vp.SetXOffset(0)
+			}
+			m.vp.SoftWrap = !m.vp.SoftWrap
+			return m, nil
+		}
+
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
@@ -163,5 +185,83 @@ func (m ViewerModel) View() string {
 	if !m.ready {
 		return "  (选中文件查看内容)"
 	}
-	return m.vp.View()
+	if m.vp.SoftWrap {
+		return m.softWrapView()
+	}
+	return m.nowrapView()
+}
+
+func (m ViewerModel) nowrapView() string {
+	width := m.vp.Width()
+	height := m.vp.Height()
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	lines := viewerContentLines(m.vp.GetContent())
+	start := min(m.vp.YOffset(), len(lines))
+	end := min(start+height, len(lines))
+	visible := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		gutter := m.viewerGutter(i, len(lines), false)
+		contentWidth := max(width-ansi.StringWidth(gutter), 0)
+		visible = append(visible, gutter+ansi.Cut(lines[i], m.vp.XOffset(), m.vp.XOffset()+contentWidth))
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (m ViewerModel) softWrapView() string {
+	width := m.vp.Width()
+	height := m.vp.Height()
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+
+	lines := viewerContentLines(m.vp.GetContent())
+	visible := make([]string, 0, height)
+	skip := m.vp.YOffset()
+	for i, line := range lines {
+		firstGutter := m.viewerGutter(i, len(lines), false)
+		contentWidth := max(width-ansi.StringWidth(firstGutter), 0)
+		segmentWidth := max(contentWidth, 1)
+		segmentCount := max((ansi.StringWidth(line)+segmentWidth-1)/segmentWidth, 1)
+
+		for segment := 0; segment < segmentCount; segment++ {
+			if skip > 0 {
+				skip--
+				continue
+			}
+			soft := segment > 0
+			gutter := firstGutter
+			if soft {
+				gutter = m.viewerGutter(i, len(lines), true)
+			}
+			contentWidth = max(width-ansi.StringWidth(gutter), 0)
+			start := segment * segmentWidth
+			visible = append(visible, gutter+ansi.Cut(line, start, start+contentWidth))
+			if len(visible) >= height {
+				return strings.Join(visible, "\n")
+			}
+		}
+	}
+	return strings.Join(visible, "\n")
+}
+
+func (m ViewerModel) viewerGutter(index, totalLines int, soft bool) string {
+	if m.vp.LeftGutterFunc == nil {
+		return ""
+	}
+	return m.vp.LeftGutterFunc(viewport.GutterContext{
+		Index:      index,
+		TotalLines: totalLines,
+		Soft:       soft,
+	})
+}
+
+func viewerContentLines(content string) []string {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 1 && ansi.StringWidth(lines[0]) == 0 {
+		return nil
+	}
+	return lines
 }

@@ -14,18 +14,20 @@ type Panel struct {
 	Focused bool
 	Width   int
 	Height  int
+	NoWrap  bool
 }
 
 func renderPanel(p Panel) string {
 	contentWidth := panelContentWidth(p.Width)
 	contentHeight := panelContentHeight(p.Height)
 
-	title := panelTitleStyle.Render(truncateCell(defaultString(p.Title, "(none)"), contentWidth))
+	titleText := padCell(truncateCell(defaultString(p.Title, "(none)"), contentWidth), contentWidth)
+	title := panelTitleStyle.Render(titleText)
 
 	footer := ""
 	footerRows := 0
 	if len(p.Footer) > 0 {
-		footerText := truncateCell(strings.Join(p.Footer, " · "), contentWidth)
+		footerText := padCell(formatFooter(p.Footer, contentWidth), contentWidth)
 		footerStyle := panelFooterStyle
 		if p.Focused {
 			footerStyle = panelFooterActiveStyle
@@ -34,10 +36,7 @@ func renderPanel(p Panel) string {
 		footerRows = 1
 	}
 
-	bodyHeight := contentHeight - 1 - footerRows
-	if bodyHeight < 1 {
-		bodyHeight = 1
-	}
+	bodyHeight := max(contentHeight-1-footerRows, 1)
 	body := fitBlock(p.Body, contentWidth, bodyHeight)
 
 	parts := []string{title, body}
@@ -45,10 +44,11 @@ func renderPanel(p Panel) string {
 		parts = append(parts, footer)
 	}
 
-	return panelStyle(p.Focused).
-		Width(p.Width).
-		Height(p.Height).
-		Render(joinVertical(parts...))
+	style := panelStyle(p.Focused).Height(p.Height)
+	if !p.NoWrap {
+		style = style.Width(p.Width)
+	}
+	return style.Render(joinVertical(parts...))
 }
 
 func panelContentWidth(panelWidth int) int {
@@ -93,6 +93,91 @@ func truncateCell(s string, maxWidth int) string {
 		b.WriteRune(r)
 	}
 	return b.String() + "…"
+}
+
+func formatFooter(parts []string, maxWidth int) string {
+	if len(parts) == 0 || maxWidth <= 0 {
+		return ""
+	}
+
+	joined := strings.Join(parts, " · ")
+	if lipgloss.Width(joined) <= maxWidth {
+		return joined
+	}
+	if len(parts) == 1 {
+		return truncateMiddleCell(parts[0], maxWidth)
+	}
+
+	sep := " · "
+	minPrimaryWidth := min(14, maxWidth)
+	for suffixCount := len(parts) - 1; suffixCount >= 0; suffixCount-- {
+		suffix := strings.Join(parts[1:1+suffixCount], sep)
+		reservedWidth := 0
+		if suffix != "" {
+			reservedWidth = lipgloss.Width(sep) + lipgloss.Width(suffix)
+		}
+		primaryWidth := maxWidth - reservedWidth
+		if primaryWidth <= 0 {
+			continue
+		}
+		if suffixCount > 0 && primaryWidth < minPrimaryWidth {
+			continue
+		}
+		primary := truncateMiddleCell(parts[0], primaryWidth)
+		if suffix == "" {
+			return primary
+		}
+		return primary + sep + suffix
+	}
+
+	return truncateMiddleCell(parts[0], maxWidth)
+}
+
+func truncateMiddleCell(s string, maxWidth int) string {
+	if maxWidth <= 0 || lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 1 {
+		return "…"
+	}
+
+	leftWidth := (maxWidth - 1) / 3
+	rightWidth := maxWidth - 1 - leftWidth
+
+	left := takeCellPrefix(s, leftWidth)
+	right := takeCellSuffix(s, rightWidth)
+	return left + "…" + right
+}
+
+func takeCellPrefix(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range s {
+		candidate := b.String() + string(r)
+		if lipgloss.Width(candidate) > maxWidth {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func takeCellSuffix(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	start := len(runes)
+	for i := len(runes) - 1; i >= 0; i-- {
+		candidate := string(runes[i:])
+		if lipgloss.Width(candidate) > maxWidth {
+			break
+		}
+		start = i
+	}
+	return string(runes[start:])
 }
 
 func fitBlock(s string, width, height int) string {
