@@ -149,6 +149,18 @@ func truncateMiddleCell(s string, maxWidth int) string {
 	return left + "…" + right
 }
 
+// truncatePrefixCell 截断前缀，保留尾部：超长时返回 "…" + 末尾片段，
+// 适合需要看清路径末段目录名的场景。
+func truncatePrefixCell(s string, maxWidth int) string {
+	if maxWidth <= 0 || lipgloss.Width(s) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 1 {
+		return "…"
+	}
+	return "…" + takeCellSuffix(s, maxWidth-1)
+}
+
 func takeCellPrefix(s string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""

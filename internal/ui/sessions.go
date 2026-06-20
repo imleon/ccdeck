@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -571,6 +572,15 @@ func (m SessionsModel) renderRow(index int) []string {
 	}
 }
 
+// projectDirLabel 返回 session group 头部展示的标签：只取路径最末的目录名。
+// 空值与占位符原样返回。
+func projectDirLabel(dir string) string {
+	if dir == "" || dir == unknownProjectDir {
+		return dir
+	}
+	return filepath.Base(filepath.Clean(dir))
+}
+
 func renderSessionGroupHeader(dir string, width int, selected, expanded bool) string {
 	if width <= 0 {
 		return ""
@@ -582,7 +592,7 @@ func renderSessionGroupHeader(dir string, width int, selected, expanded bool) st
 	prefixWidth := lipgloss.Width(twisty)
 	text := twisty
 	if width > prefixWidth {
-		text += truncateMiddleCell(dir, width-prefixWidth)
+		text += truncatePrefixCell(projectDirLabel(dir), width-prefixWidth)
 	}
 	style := sessionGroupHeaderStyle
 	if selected {
