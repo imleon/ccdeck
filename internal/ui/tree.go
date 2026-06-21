@@ -1,12 +1,16 @@
 package ui
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"cc-sidecar/internal/gitstatus"
 )
 
 // treeNode 是目录树里的一个节点（文件或目录）。
@@ -31,10 +35,28 @@ type TreeModel struct {
 	width  int
 	height int
 	offset int // 滚动偏移
+
+	// gitStatus 合并了文件与目录的 git 状态，键为绝对路径。由 root 注入，
+	// 渲染时按节点 path 查表。nil/缺失表示干净或无 git。
+	gitStatus map[string]gitstatus.Status
 }
 
 func NewTree() TreeModel {
 	return TreeModel{}
+}
+
+// SetGitStatus 注入最新的 git 状态（文件级 + 目录聚合）。root 在每次
+// git 状态刷新完成时调用。传入 nil 等价于清空（无 git 仓库时）。
+func (m TreeModel) SetGitStatus(files map[string]gitstatus.Status, root string) TreeModel {
+	if len(files) == 0 {
+		m.gitStatus = nil
+		return m
+	}
+	merged := make(map[string]gitstatus.Status, len(files)*2)
+	maps.Copy(merged, files)
+	maps.Copy(merged, gitstatus.Aggregate(files, root))
+	m.gitStatus = merged
+	return m
 }
 
 // Root returns the current tree root directory for titles/status display.
@@ -44,6 +66,9 @@ func (m TreeModel) Root() string {
 
 // SetRoot 切换根目录并重建第一层。
 func (m TreeModel) SetRoot(dir string) TreeModel {
+	if filepath.Clean(dir) != filepath.Clean(m.root) {
+		m.gitStatus = nil
+	}
 	m.root = dir
 	m.cursor = 0
 	m.offset = 0
@@ -466,24 +491,83 @@ func (m TreeModel) View(openedPath string) string {
 	if openedPath != "" {
 		cleanOpenedPath = filepath.Clean(openedPath)
 	}
-	end := m.offset + m.height
-	if end > len(m.nodes) {
-		end = len(m.nodes)
-	}
+	end := min(m.offset+m.height, len(m.nodes))
 	for i := m.offset; i < end; i++ {
 		n := m.nodes[i]
-		line := treeLinePrefix(n) + n.name
-		line = truncateCell(line, m.width-1)
-		line = " " + line
 		isCursor := i == m.cursor
 		isOpened := cleanOpenedPath != "" && !n.isDir && filepath.Clean(n.path) == cleanOpenedPath
-		if isCursor {
-			line = treeCursorStyle.Render(line)
-		} else if isOpened {
-			line = treeOpenedFileStyle.Render(line)
-		}
-		b.WriteString(line)
+		b.WriteString(m.renderLine(n, isCursor, isOpened))
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+func (m TreeModel) renderLine(n treeNode, isCursor, isOpened bool) string {
+	width := m.width - 1
+	if width < 1 {
+		width = 1
+	}
+	status := m.nodeStatus(n)
+	mark := status.Mark()
+
+	prefix := treeLinePrefix(n)
+	nameWidth := width - lipgloss.Width(prefix)
+	if mark != "" {
+		nameWidth -= lipgloss.Width(mark) + 1
+	}
+	if nameWidth < 1 {
+		nameWidth = 1
+	}
+
+	name := truncateCell(n.name, nameWidth)
+	if style, ok := treeGitStyle(status); ok && !isCursor {
+		name = style.Render(name)
+	}
+	line := prefix + name
+	if mark != "" {
+		plainWidth := lipgloss.Width(prefix) + lipgloss.Width(truncateCell(n.name, nameWidth))
+		padding := width - plainWidth - lipgloss.Width(mark)
+		if padding < 1 {
+			padding = 1
+		}
+		badge := mark
+		if style, ok := treeGitStyle(status); ok && !isCursor {
+			badge = style.Render(mark)
+		}
+		line += strings.Repeat(" ", padding) + badge
+	}
+	line = " " + line
+	if isCursor {
+		return treeCursorStyle.Render(truncateCell(line, m.width))
+	}
+	if isOpened {
+		return treeOpenedFileStyle.Render(truncateCell(line, m.width))
+	}
+	return truncateCell(line, m.width)
+}
+
+func (m TreeModel) nodeStatus(n treeNode) gitstatus.Status {
+	if len(m.gitStatus) == 0 {
+		return gitstatus.StatusNone
+	}
+	return m.gitStatus[filepath.Clean(n.path)]
+}
+
+func treeGitStyle(status gitstatus.Status) (lipgloss.Style, bool) {
+	switch status {
+	case gitstatus.StatusModified:
+		return treeGitModifiedStyle, true
+	case gitstatus.StatusAdded:
+		return treeGitAddedStyle, true
+	case gitstatus.StatusDeleted:
+		return treeGitDeletedStyle, true
+	case gitstatus.StatusRenamed:
+		return treeGitRenamedStyle, true
+	case gitstatus.StatusUntracked:
+		return treeGitUntrackedStyle, true
+	case gitstatus.StatusConflict:
+		return treeGitConflictStyle, true
+	default:
+		return lipgloss.Style{}, false
+	}
 }

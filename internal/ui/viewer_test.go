@@ -35,7 +35,9 @@ func TestViewerLoadGoesToTopRefreshKeepsScroll(t *testing.T) {
 
 	// 首次加载：应回到顶部。
 	var m ViewerModel = viewer
+	m.path = "/tmp/a.txt"
 	m, _ = m.Update(loadFileMsg{
+		requestID: m.requestID,
 		path:      "/tmp/a.txt",
 		content:   content,
 		state:     viewerLoaded,

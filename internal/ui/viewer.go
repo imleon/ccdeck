@@ -11,6 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/chroma/v2/quick"
 	"github.com/charmbracelet/x/ansi"
+
+	"cc-sidecar/internal/gitstatus"
 )
 
 const maxPreviewBytes = 512 * 1024
@@ -35,6 +37,9 @@ type ViewerModel struct {
 	state     viewerState
 	message   string
 	lineCount int
+
+	requestID uint64
+	loading   bool
 }
 
 func NewViewer() ViewerModel {
@@ -77,6 +82,7 @@ func (m ViewerModel) SetSize(w, h int) ViewerModel {
 }
 
 type loadFileMsg struct {
+	requestID      uint64
 	path           string
 	content        string
 	err            error
@@ -87,43 +93,81 @@ type loadFileMsg struct {
 }
 
 // LoadFile 读取并渲染文件，渲染后滚动到顶部。用于用户主动选中文件。
-func (m ViewerModel) LoadFile(path string) tea.Cmd {
-	return loadFileCmd(path, false)
+func (m ViewerModel) LoadFile(path string) (ViewerModel, tea.Cmd) {
+	m.path = path
+	m.ready = false
+	m.loading = true
+	m.requestID++
+	return m, loadFileCmd(path, m.requestID, false)
 }
 
 // Refresh 重新读取当前文件并保留滚动位置。用于自动刷新轮询；无文件时返回 nil。
-func (m ViewerModel) Refresh() tea.Cmd {
-	if m.path == "" {
-		return nil
+func (m ViewerModel) Refresh() (ViewerModel, tea.Cmd) {
+	if m.path == "" || m.loading {
+		return m, nil
 	}
-	return loadFileCmd(m.path, true)
+	m.loading = true
+	m.requestID++
+	return m, loadFileCmd(m.path, m.requestID, true)
 }
 
-func loadFileCmd(path string, preserveScroll bool) tea.Cmd {
+func loadFileCmd(path string, requestID uint64, preserveScroll bool) tea.Cmd {
 	return func() tea.Msg {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			message := "无法读取: " + err.Error()
-			return loadFileMsg{path: path, err: err, state: viewerReadError, message: message, content: errorStyle.Render(message), preserveScroll: preserveScroll}
-		}
+		return renderFileMsg(path, requestID, preserveScroll)
+	}
+}
+
+func renderFileMsg(path string, requestID uint64, preserveScroll bool) loadFileMsg {
+	data, readErr := os.ReadFile(path)
+	if readErr == nil {
 		if len(data) == 0 {
 			message := "空文件"
-			return loadFileMsg{path: path, state: viewerEmpty, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
+			return loadFileMsg{requestID: requestID, path: path, state: viewerEmpty, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
 		}
 		if bytes.Contains(data, []byte{0}) {
 			message := "二进制文件，未预览"
-			return loadFileMsg{path: path, state: viewerBinary, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
+			return loadFileMsg{requestID: requestID, path: path, state: viewerBinary, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
 		}
 		if len(data) > maxPreviewBytes {
 			message := fmt.Sprintf("文件超过 %d KiB，未高亮预览", maxPreviewBytes/1024)
-			return loadFileMsg{path: path, state: viewerTooLarge, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
+			return loadFileMsg{requestID: requestID, path: path, state: viewerTooLarge, message: message, content: warningStyle.Render(message), preserveScroll: preserveScroll}
+		}
+
+		if diff, err := gitstatus.InlineDiff(path); err == nil && diff.HasDiff {
+			content := renderInlineDiff(diff.Lines)
+			lineCount := len(diff.Lines)
+			return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
 		}
 
 		content := string(data)
 		lineCount := countLines(content)
 		rendered := highlightContent(path, content)
-		return loadFileMsg{path: path, content: rendered, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines", lineCount), preserveScroll: preserveScroll}
+		return loadFileMsg{requestID: requestID, path: path, content: rendered, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines", lineCount), preserveScroll: preserveScroll}
 	}
+
+	if diff, err := gitstatus.InlineDiff(path); err == nil && diff.HasDiff {
+		content := renderInlineDiff(diff.Lines)
+		lineCount := len(diff.Lines)
+		return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
+	}
+
+	message := "无法读取: " + readErr.Error()
+	return loadFileMsg{requestID: requestID, path: path, err: readErr, state: viewerReadError, message: message, content: errorStyle.Render(message), preserveScroll: preserveScroll}
+}
+
+func renderInlineDiff(lines []gitstatus.DiffLine) string {
+	rendered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		switch line.Kind {
+		case gitstatus.DiffLineAdded:
+			rendered = append(rendered, viewerDiffAddedStyle.Render("+"+line.Text))
+		case gitstatus.DiffLineDeleted:
+			rendered = append(rendered, viewerDiffDeletedStyle.Render("-"+line.Text))
+		default:
+			rendered = append(rendered, line.Text)
+		}
+	}
+	return strings.Join(rendered, "\n")
 }
 
 func highlightContent(path, content string) string {
@@ -165,7 +209,10 @@ func lineNumberGutter(lineCount int) viewport.GutterFunc {
 func (m ViewerModel) Update(msg tea.Msg) (ViewerModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case loadFileMsg:
-		m.path = msg.path
+		if msg.requestID != m.requestID || msg.path != m.path {
+			return m, nil
+		}
+		m.loading = false
 		m.err = msg.err
 		m.ready = true
 		m.state = msg.state

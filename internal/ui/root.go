@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"cc-sidecar/internal/gitstatus"
 	"cc-sidecar/internal/session"
 )
 
@@ -37,6 +38,12 @@ type sessionsRefreshedMsg struct {
 	err      error
 }
 
+type gitStatusRefreshedMsg struct {
+	treeRoot string
+	result   gitstatus.Result
+	err      error
+}
+
 // RootModel 组合三个子面板，负责布局、焦点切换和全局按键。
 type RootModel struct {
 	sessions SessionsModel
@@ -47,9 +54,10 @@ type RootModel struct {
 	width  int
 	height int
 
-	sessionSource   session.Source
-	refreshInterval time.Duration
-	refreshInFlight bool
+	sessionSource     session.Source
+	refreshInterval   time.Duration
+	refreshInFlight   bool
+	gitStatusInFlight bool
 
 	altScreen bool
 	showHelp  bool
@@ -113,6 +121,26 @@ func (m RootModel) startSessionsRefresh() (RootModel, tea.Cmd) {
 	return m, scanSessionsCmd(m.sessionSource)
 }
 
+func loadGitStatusCmd(treeRoot string) tea.Cmd {
+	if treeRoot == "" {
+		return nil
+	}
+	cleanTreeRoot := filepath.Clean(treeRoot)
+	return func() tea.Msg {
+		result, err := gitstatus.Load(cleanTreeRoot)
+		return gitStatusRefreshedMsg{treeRoot: cleanTreeRoot, result: result, err: err}
+	}
+}
+
+func (m RootModel) startGitStatusRefresh() (RootModel, tea.Cmd) {
+	root := m.tree.Root()
+	if root == "" || m.gitStatusInFlight {
+		return m, nil
+	}
+	m.gitStatusInFlight = true
+	return m, loadGitStatusCmd(root)
+}
+
 func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -150,10 +178,17 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if refreshCmd != nil {
 			cmds = append(cmds, refreshCmd)
 		}
-		// 同一节拍顺带刷新中栏目录树与右栏文件：tree 重扫为同步内存操作，
-		// viewer 重新读盘为异步 cmd。三栏共享这一条 1s 心跳。
+		// 同一节拍顺带刷新中栏目录树、git 状态与右栏文件：tree 重扫为同步
+		// 内存操作，git/viewer 读盘为异步 cmd。三栏共享这一条 1s 心跳。
 		m.tree = m.tree.Refresh()
-		if viewerCmd := m.viewer.Refresh(); viewerCmd != nil {
+		var gitCmd tea.Cmd
+		m, gitCmd = m.startGitStatusRefresh()
+		if gitCmd != nil {
+			cmds = append(cmds, gitCmd)
+		}
+		var viewerCmd tea.Cmd
+		m.viewer, viewerCmd = m.viewer.Refresh()
+		if viewerCmd != nil {
 			cmds = append(cmds, viewerCmd)
 		}
 		return m, tea.Batch(cmds...)
@@ -165,13 +200,24 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case gitStatusRefreshedMsg:
+		m.gitStatusInFlight = false
+		if filepath.Clean(msg.treeRoot) != filepath.Clean(m.tree.Root()) {
+			var cmd tea.Cmd
+			m, cmd = m.startGitStatusRefresh()
+			return m, cmd
+		}
+		if msg.err != nil {
+			m.tree = m.tree.SetGitStatus(nil, "")
+			return m, nil
+		}
+		m.tree = m.tree.SetGitStatus(msg.result.Files, msg.result.Root)
+		return m, nil
+
 	case treeSelectFileMsg:
 		// 树选中文件 → 让 viewer 加载
 		var cmd tea.Cmd
-		m.viewer, cmd = m.viewer.Update(msg)
-		if c := m.viewer.LoadFile(msg.path); c != nil {
-			return m, tea.Batch(cmd, c)
-		}
+		m.viewer, cmd = m.viewer.LoadFile(msg.path)
 		return m, cmd
 
 	case sessionChosenMsg:
@@ -179,6 +225,9 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("cd %s  &&  claude --resume %s", msg.cwd, msg.id)
 		if msg.cwd != "" {
 			m.tree = m.tree.SetRoot(msg.cwd)
+			var cmd tea.Cmd
+			m, cmd = m.startGitStatusRefresh()
+			return m, cmd
 		}
 		return m, nil
 

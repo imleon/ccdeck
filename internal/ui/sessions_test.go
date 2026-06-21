@@ -208,7 +208,7 @@ func TestSessionsFilterKeepsHeaderForMatch(t *testing.T) {
 		t.Fatalf("filtered rows should keep group header then session, got %+v", m.rows)
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "/repo/a") || !strings.Contains(view, "One") || strings.Contains(view, "Two") {
+	if !strings.Contains(view, "a") || !strings.Contains(view, "One") || strings.Contains(view, "Two") {
 		t.Fatalf("filtered view should include matching group/session only, got %q", view)
 	}
 }

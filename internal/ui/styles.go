@@ -90,8 +90,40 @@ var treeOpenedFileStyle = lipgloss.NewStyle().
 	Bold(true).
 	Inline(true)
 
+var treeGitModifiedStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("178")).
+	Inline(true)
+
+var treeGitAddedStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("70")).
+	Inline(true)
+
+var treeGitDeletedStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("167")).
+	Inline(true)
+
+var treeGitUntrackedStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("71")).
+	Inline(true)
+
+var treeGitRenamedStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("81")).
+	Inline(true)
+
+var treeGitConflictStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("205")).
+	Inline(true)
+
 var lineNumberStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("244"))
+
+var viewerDiffAddedStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("70")).
+	Inline(true)
+
+var viewerDiffDeletedStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("167")).
+	Inline(true)
 
 var warningStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("214"))

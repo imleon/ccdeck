@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"cc-sidecar/internal/gitstatus"
 )
 
 // treeNodePaths 返回当前可见节点的 path 列表，便于断言。
@@ -112,5 +114,47 @@ func TestTreeRefreshNoRootIsNoop(t *testing.T) {
 	m = m.Refresh()
 	if len(m.nodes) != 0 {
 		t.Fatalf("refresh without root should keep empty nodes, got %d", len(m.nodes))
+	}
+}
+
+func TestTreeSetRootClearsGitStatusOnRootChange(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	fileA := filepath.Join(rootA, "a.go")
+	if err := os.WriteFile(fileA, []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(rootA)
+	m = m.SetGitStatus(map[string]gitstatus.Status{fileA: gitstatus.StatusModified}, rootA)
+	if len(m.gitStatus) == 0 {
+		t.Fatal("expected git status to be set")
+	}
+
+	m = m.SetRoot(rootB)
+	if len(m.gitStatus) != 0 {
+		t.Fatalf("git status should be cleared after root change, got %v", m.gitStatus)
+	}
+}
+
+func TestTreeSetGitStatusAggregatesDirectoryStatus(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(sub, "a.go")
+	if err := os.WriteFile(file, []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root)
+	m = m.SetGitStatus(map[string]gitstatus.Status{file: gitstatus.StatusModified}, root)
+
+	if got := m.gitStatus[file]; got != gitstatus.StatusModified {
+		t.Fatalf("file status = %v, want Modified", got)
+	}
+	if got := m.gitStatus[sub]; got != gitstatus.StatusModified {
+		t.Fatalf("sub dir status = %v, want Modified", got)
 	}
 }
