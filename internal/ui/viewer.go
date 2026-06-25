@@ -9,10 +9,11 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2/quick"
 	"github.com/charmbracelet/x/ansi"
 
-	"cc-sidecar/internal/gitstatus"
+	"ccdeck/internal/gitstatus"
 )
 
 const maxPreviewBytes = 512 * 1024
@@ -37,6 +38,7 @@ type ViewerModel struct {
 	state     viewerState
 	message   string
 	lineCount int
+	diffKinds []gitstatus.DiffLineKind
 
 	requestID uint64
 	loading   bool
@@ -89,6 +91,7 @@ type loadFileMsg struct {
 	state          viewerState
 	message        string
 	lineCount      int
+	diffKinds      []gitstatus.DiffLineKind
 	preserveScroll bool // true 表示自动刷新：渲染后保留原滚动位置，不回到顶部
 }
 
@@ -136,7 +139,7 @@ func renderFileMsg(path string, requestID uint64, preserveScroll bool) loadFileM
 		if diff, err := gitstatus.InlineDiff(path); err == nil && diff.HasDiff {
 			content := renderInlineDiff(diff.Lines)
 			lineCount := len(diff.Lines)
-			return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
+			return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, diffKinds: diffLineKinds(diff.Lines), message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
 		}
 
 		content := string(data)
@@ -148,7 +151,7 @@ func renderFileMsg(path string, requestID uint64, preserveScroll bool) loadFileM
 	if diff, err := gitstatus.InlineDiff(path); err == nil && diff.HasDiff {
 		content := renderInlineDiff(diff.Lines)
 		lineCount := len(diff.Lines)
-		return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
+		return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, diffKinds: diffLineKinds(diff.Lines), message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
 	}
 
 	message := "无法读取: " + readErr.Error()
@@ -159,15 +162,21 @@ func renderInlineDiff(lines []gitstatus.DiffLine) string {
 	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
 		switch line.Kind {
-		case gitstatus.DiffLineAdded:
-			rendered = append(rendered, viewerDiffAddedStyle.Render("+"+line.Text))
-		case gitstatus.DiffLineDeleted:
-			rendered = append(rendered, viewerDiffDeletedStyle.Render("-"+line.Text))
+		case gitstatus.DiffLineAdded, gitstatus.DiffLineDeleted:
+			rendered = append(rendered, line.Text)
 		default:
 			rendered = append(rendered, line.Text)
 		}
 	}
 	return strings.Join(rendered, "\n")
+}
+
+func diffLineKinds(lines []gitstatus.DiffLine) []gitstatus.DiffLineKind {
+	kinds := make([]gitstatus.DiffLineKind, len(lines))
+	for i, line := range lines {
+		kinds[i] = line.Kind
+	}
+	return kinds
 }
 
 func highlightContent(path, content string) string {
@@ -193,17 +202,62 @@ func countLines(s string) int {
 	return lines
 }
 
-func lineNumberGutter(lineCount int) viewport.GutterFunc {
+func lineNumberGutter(lineCount int, diffKinds []gitstatus.DiffLineKind) viewport.GutterFunc {
 	width := len(fmt.Sprintf("%d", lineCount))
 	return func(info viewport.GutterContext) string {
-		if info.Soft {
-			return lineNumberStyle.Render(strings.Repeat(" ", width) + " │ ")
+		kind := viewerDiffKind(diffKinds, info.Index)
+		marker := diffMarker(kind)
+		if info.Soft || info.Index >= info.TotalLines {
+			marker = " "
+			gutter := strings.Repeat(" ", width) + marker + "│ "
+			if _, ok := viewerDiffLineStyle(kind); ok {
+				return gutter
+			}
+			return lineNumberStyle.Render(gutter)
 		}
-		if info.Index >= info.TotalLines {
-			return lineNumberStyle.Render(strings.Repeat(" ", width) + " │ ")
+		gutter := fmt.Sprintf("%*d%s│ ", width, info.Index+1, marker)
+		if _, ok := viewerDiffLineStyle(kind); ok {
+			return gutter
 		}
-		return lineNumberStyle.Render(fmt.Sprintf("%*d │ ", width, info.Index+1))
+		return lineNumberStyle.Render(gutter)
 	}
+}
+
+func viewerDiffKind(kinds []gitstatus.DiffLineKind, index int) gitstatus.DiffLineKind {
+	if index < 0 || index >= len(kinds) {
+		return gitstatus.DiffLineContext
+	}
+	return kinds[index]
+}
+
+func diffMarker(kind gitstatus.DiffLineKind) string {
+	switch kind {
+	case gitstatus.DiffLineAdded:
+		return "+"
+	case gitstatus.DiffLineDeleted:
+		return "-"
+	default:
+		return " "
+	}
+}
+
+func viewerDiffLineStyle(kind gitstatus.DiffLineKind) (lipgloss.Style, bool) {
+	switch kind {
+	case gitstatus.DiffLineAdded:
+		return viewerDiffAddedStyle, true
+	case gitstatus.DiffLineDeleted:
+		return viewerDiffDeletedStyle, true
+	default:
+		return lipgloss.Style{}, false
+	}
+}
+
+func renderViewerBodyLine(line string, bodyWidth int, kind gitstatus.DiffLineKind) string {
+	line = padCell(truncateCell(line, bodyWidth), bodyWidth)
+	if style, ok := viewerDiffLineStyle(kind); ok {
+		return style.Render(line)
+	}
+	return line
 }
 
 func (m ViewerModel) Update(msg tea.Msg) (ViewerModel, tea.Cmd) {
@@ -218,8 +272,9 @@ func (m ViewerModel) Update(msg tea.Msg) (ViewerModel, tea.Cmd) {
 		m.state = msg.state
 		m.message = msg.message
 		m.lineCount = msg.lineCount
+		m.diffKinds = msg.diffKinds
 		if msg.lineCount > 0 {
-			m.vp.LeftGutterFunc = lineNumberGutter(msg.lineCount)
+			m.vp.LeftGutterFunc = lineNumberGutter(msg.lineCount, msg.diffKinds)
 		} else {
 			m.vp.LeftGutterFunc = nil
 		}
@@ -266,16 +321,19 @@ func (m ViewerModel) nowrapView() string {
 		return ""
 	}
 
+	scrollbarWidth := 2
+	bodyWidth := max(width-scrollbarWidth, 1)
 	lines := viewerContentLines(m.vp.GetContent())
 	start := min(m.vp.YOffset(), len(lines))
 	end := min(start+height, len(lines))
 	visible := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
+		kind := viewerDiffKind(m.diffKinds, i)
 		gutter := m.viewerGutter(i, len(lines), false)
-		contentWidth := max(width-ansi.StringWidth(gutter), 0)
-		visible = append(visible, gutter+ansi.Cut(lines[i], m.vp.XOffset(), m.vp.XOffset()+contentWidth))
+		contentWidth := max(bodyWidth-ansi.StringWidth(gutter), 0)
+		visible = append(visible, renderViewerBodyLine(gutter+ansi.Cut(lines[i], m.vp.XOffset(), m.vp.XOffset()+contentWidth), bodyWidth, kind))
 	}
-	return strings.Join(visible, "\n")
+	return joinWithViewerScrollbar(visible, height, len(lines), m.vp.YOffset(), scrollbarWidth)
 }
 
 func (m ViewerModel) softWrapView() string {
@@ -285,16 +343,17 @@ func (m ViewerModel) softWrapView() string {
 		return ""
 	}
 
+	scrollbarWidth := 2
+	bodyWidth := max(width-scrollbarWidth, 1)
 	lines := viewerContentLines(m.vp.GetContent())
 	visible := make([]string, 0, height)
 	skip := m.vp.YOffset()
 	for i, line := range lines {
 		firstGutter := m.viewerGutter(i, len(lines), false)
-		contentWidth := max(width-ansi.StringWidth(firstGutter), 0)
-		segmentWidth := max(contentWidth, 1)
-		segmentCount := max((ansi.StringWidth(line)+segmentWidth-1)/segmentWidth, 1)
+		segmentWidth := m.softWrapSegmentWidth(bodyWidth, firstGutter)
+		segmentCount := softWrapSegmentCount(line, segmentWidth)
 
-		for segment := 0; segment < segmentCount; segment++ {
+		for segment := range segmentCount {
 			if skip > 0 {
 				skip--
 				continue
@@ -304,15 +363,56 @@ func (m ViewerModel) softWrapView() string {
 			if soft {
 				gutter = m.viewerGutter(i, len(lines), true)
 			}
-			contentWidth = max(width-ansi.StringWidth(gutter), 0)
+			kind := viewerDiffKind(m.diffKinds, i)
+			contentWidth := max(bodyWidth-ansi.StringWidth(gutter), 0)
 			start := segment * segmentWidth
-			visible = append(visible, gutter+ansi.Cut(line, start, start+contentWidth))
+			visible = append(visible, renderViewerBodyLine(gutter+ansi.Cut(line, start, start+contentWidth), bodyWidth, kind))
 			if len(visible) >= height {
-				return strings.Join(visible, "\n")
+				return joinWithViewerScrollbar(visible, height, m.softWrapTotalHeight(lines, bodyWidth), m.vp.YOffset(), scrollbarWidth)
 			}
 		}
 	}
-	return strings.Join(visible, "\n")
+	return joinWithViewerScrollbar(visible, height, m.softWrapTotalHeight(lines, bodyWidth), m.vp.YOffset(), scrollbarWidth)
+}
+
+func (m ViewerModel) softWrapSegmentWidth(bodyWidth int, gutter string) int {
+	return max(bodyWidth-ansi.StringWidth(gutter), 1)
+}
+
+func softWrapSegmentCount(line string, segmentWidth int) int {
+	return max((ansi.StringWidth(line)+segmentWidth-1)/segmentWidth, 1)
+}
+
+func (m ViewerModel) softWrapTotalHeight(lines []string, bodyWidth int) int {
+	total := 0
+	for i, line := range lines {
+		gutter := m.viewerGutter(i, len(lines), false)
+		total += softWrapSegmentCount(line, m.softWrapSegmentWidth(bodyWidth, gutter))
+	}
+	return total
+}
+
+func joinWithViewerScrollbar(lines []string, viewportHeight, totalHeight, topOffset, scrollbarWidth int) string {
+	scrollbar := renderViewerScrollbar(viewportHeight, totalHeight, topOffset, scrollbarWidth)
+	for i, line := range lines {
+		bar := strings.Repeat(" ", scrollbarWidth)
+		if i < len(scrollbar) {
+			bar = scrollbar[i]
+		}
+		lines[i] = line + bar
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderViewerScrollbar(viewportHeight, totalHeight, topOffset, width int) []string {
+	return renderVerticalScrollbar(viewportHeight, totalHeight, topOffset, verticalScrollbarOptions{
+		Width:      width,
+		Track:      "│",
+		Thumb:      "┃",
+		TrackStyle: sessionScrollbarTrackStyle,
+		ThumbStyle: sessionScrollbarThumbStyle,
+		AlignRight: true,
+	})
 }
 
 func (m ViewerModel) viewerGutter(index, totalLines int, soft bool) string {

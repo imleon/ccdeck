@@ -37,43 +37,73 @@ var panelFooterActiveStyle = lipgloss.NewStyle().
 
 var sessionGroupHeaderStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("244"))
+	Foreground(lipgloss.Color("179"))
+
+var sessionSelectedBGColor = lipgloss.Color("#3a2f29")
 
 var sessionSelectedGroupHeaderStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("229")).
-	Background(focusedBorderColor).
+	Foreground(lipgloss.Color("254")).
+	Background(sessionSelectedBGColor).
 	Inline(true)
+
+var sessionActiveGroupHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("215"))
 
 var sessionTitleStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("252"))
 
 var sessionSelectedTitleStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("229")).
-	Background(focusedBorderColor).
+	Foreground(lipgloss.Color("254")).
+	Background(sessionSelectedBGColor).
 	Inline(true)
+
+var sessionActiveTitleStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("117"))
 
 var sessionAgeStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("240"))
 
 var sessionSelectedAgeStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("250")).
-	Background(focusedBorderColor).
+	Background(sessionSelectedBGColor).
 	Inline(true)
 
+var sessionActiveAgeStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("117"))
+
+var sessionNormalFillStyle = lipgloss.NewStyle().Inline(true)
+
 var sessionSelectedFillStyle = lipgloss.NewStyle().
-	Background(focusedBorderColor).
+	Background(sessionSelectedBGColor).
+	Inline(true)
+
+var sessionSelectedTrailingFillStyle = lipgloss.NewStyle().
+	Foreground(sessionSelectedBGColor).
+	Background(sessionSelectedBGColor).
 	Inline(true)
 
 var sessionDescStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("244"))
+	Foreground(lipgloss.Color("244")).
+	Inline(true)
 
 var sessionSelectedDescStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("250")).
-	Background(focusedBorderColor).
+	Foreground(lipgloss.Color("244")).
+	Background(sessionSelectedBGColor).
 	Inline(true)
 
 var sessionFilterStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("117"))
+	Foreground(lipgloss.Color("117")).
+	Inline(true)
+
+var sessionScrollbarTrackStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("238")).
+	Inline(true)
+
+var sessionScrollbarThumbStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("255")).
+	Inline(true)
 
 var helpBoxStyle = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
@@ -117,12 +147,29 @@ var treeGitConflictStyle = lipgloss.NewStyle().
 var lineNumberStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("244"))
 
+var (
+	viewerDiffAddedBG   = lipgloss.Color("#022800")
+	viewerDiffDeletedBG = lipgloss.Color("#3d0100")
+)
+
 var viewerDiffAddedStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("70")).
+	Background(viewerDiffAddedBG).
 	Inline(true)
 
 var viewerDiffDeletedStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("167")).
+	Background(viewerDiffDeletedBG).
+	Inline(true)
+
+var viewerDiffAddedGutterStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("80")).
+	Background(viewerDiffAddedBG).
+	Inline(true)
+
+var viewerDiffDeletedGutterStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("210")).
+	Background(viewerDiffDeletedBG).
 	Inline(true)
 
 var warningStyle = lipgloss.NewStyle().

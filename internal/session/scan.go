@@ -25,6 +25,7 @@ type Session struct {
 	Title      string    // ai-title if present, else first human prompt, else "(untitled)"
 	LastPrompt string    // most recent user prompt (preview)
 	CWD        string    // working directory the session ran in (from jsonl, never derived from dir name)
+	ProjectDir string    // project root for explorer; falls back to CWD when unknown
 	GitBranch  string    // git branch at session start
 	ModTime    time.Time // file mtime, used for sort order
 }
@@ -74,8 +75,13 @@ type rawRecord struct {
 	AITitle    string          `json:"aiTitle"`
 	LastPrompt string          `json:"lastPrompt"`
 	CWD        string          `json:"cwd"`
+	Workspace  workspaceRecord `json:"workspace"`
 	GitBranch  string          `json:"gitBranch"`
 	Message    json.RawMessage `json:"message"` // decoded lazily only for fallback titles
+}
+
+type workspaceRecord struct {
+	ProjectDir string `json:"project_dir"`
 }
 
 // userMessage is the shape of a "user" record's message field when we need a
@@ -206,6 +212,9 @@ func parseFile(path string) (Session, error) {
 		if len(line) > 0 {
 			var rec rawRecord
 			if json.Unmarshal(line, &rec) == nil {
+				if s.ProjectDir == "" && rec.Workspace.ProjectDir != "" {
+					s.ProjectDir = rec.Workspace.ProjectDir
+				}
 				switch rec.Type {
 				case "ai-title":
 					if rec.AITitle != "" {
@@ -253,6 +262,9 @@ func parseFile(path string) (Session, error) {
 	}
 	if s.LastPrompt == "" {
 		s.LastPrompt = firstHumanPrompt
+	}
+	if s.ProjectDir == "" {
+		s.ProjectDir = s.CWD
 	}
 	return s, nil
 }

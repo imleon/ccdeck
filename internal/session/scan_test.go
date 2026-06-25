@@ -44,3 +44,38 @@ func TestScan(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFileExtractsWorkspaceProjectDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "abc.jsonl")
+	content := `{"type":"user","cwd":"/repo/sub","workspace":{"project_dir":"/repo"},"message":{"content":"hello"}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := parseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CWD != "/repo/sub" {
+		t.Fatalf("cwd = %q, want /repo/sub", s.CWD)
+	}
+	if s.ProjectDir != "/repo" {
+		t.Fatalf("projectDir = %q, want /repo", s.ProjectDir)
+	}
+}
+
+func TestParseFileFallsBackProjectDirToCWD(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "abc.jsonl")
+	content := `{"type":"user","cwd":"/repo/sub","message":{"content":"hello"}}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := parseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ProjectDir != "/repo/sub" {
+		t.Fatalf("projectDir = %q, want cwd fallback /repo/sub", s.ProjectDir)
+	}
+}

@@ -2,7 +2,7 @@
 .claude/settings.local.json
 
 # Build outputs
-/cc-sidecar
+/ccdeck
 *.exe
 *.test
 *.out
@@ -22,5 +22,8 @@ temp/
 *.swp
 *.swo
 
+
+# Local design docs
+/docs/
 
 CLAUDE.md

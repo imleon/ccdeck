@@ -10,21 +10,26 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"cc-sidecar/internal/session"
+	"ccdeck/internal/session"
 )
 
-const unknownProjectDir = "(unknown project)"
+const (
+	unknownProjectDir           = "(unknown project)"
+	defaultSessionGroupPageSize = 10
+)
 
 // sessionChosenMsg is emitted when Enter is pressed on a selected session.
 type sessionChosenMsg struct {
-	id  string
-	cwd string
+	id         string
+	cwd        string
+	projectDir string
 }
 
 type sessionGroup struct {
-	cwd      string
-	sessions []session.Session
-	expanded bool
+	cwd          string
+	sessions     []session.Session
+	expanded     bool
+	visibleCount int
 }
 
 type sessionRowKind int
@@ -32,6 +37,7 @@ type sessionRowKind int
 const (
 	sessionRowGroup sessionRowKind = iota
 	sessionRowSession
+	sessionRowMore
 )
 
 type sessionRow struct {
@@ -52,11 +58,48 @@ type SessionsModel struct {
 
 	filtering bool
 	filter    string
+
+	activeSessionID string
 }
 
 func NewSessions(sessions []session.Session) SessionsModel {
 	m := SessionsModel{groups: groupSessionGroupsByCWD(sessions)}
-	return m.rebuildRows()
+	m = m.applyInitialProjectState()
+	m = m.rebuildRows()
+	return m.selectFirstSessionRow()
+}
+
+func (m SessionsModel) applyInitialProjectState() SessionsModel {
+	for i := range m.groups {
+		m.groups[i].expanded = i == 0
+		m.groups[i].visibleCount = initialSessionVisibleCount(len(m.groups[i].sessions))
+	}
+	return m
+}
+
+func initialSessionVisibleCount(total int) int {
+	return min(defaultSessionGroupPageSize, total)
+}
+
+func clampSessionVisibleCount(count, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	if count <= 0 {
+		count = defaultSessionGroupPageSize
+	}
+	return min(count, total)
+}
+
+func (m SessionsModel) selectFirstSessionRow() SessionsModel {
+	for i, row := range m.rows {
+		if row.kind == sessionRowSession {
+			m.cursor = i
+			m.offset = 0
+			return m
+		}
+	}
+	return m.clampScroll()
 }
 
 func (m SessionsModel) SetSize(w, h int) SessionsModel {
@@ -82,7 +125,7 @@ func (m SessionsModel) Selected() (session.Session, bool) {
 func (m SessionsModel) CurrentCWD() string {
 	if row, ok := m.currentRow(); ok {
 		switch row.kind {
-		case sessionRowGroup:
+		case sessionRowGroup, sessionRowMore:
 			if g, ok := m.groupForRow(row); ok {
 				return groupCWD(g)
 			}
@@ -95,18 +138,26 @@ func (m SessionsModel) CurrentCWD() string {
 	return ""
 }
 
+func (m SessionsModel) SetActiveSession(id string) SessionsModel {
+	m.activeSessionID = id
+	return m
+}
+
 // SetSessions replaces the session data while preserving filter, expanded
 // groups, and the current selection when the same session/group still exists.
 func (m SessionsModel) SetSessions(sessions []session.Session) SessionsModel {
 	oldOffset := m.offset
 	oldCursor := m.cursor
 	expanded := make(map[string]bool, len(m.groups))
+	visibleCounts := make(map[string]int, len(m.groups))
 	for _, g := range m.groups {
 		expanded[g.cwd] = g.expanded
+		visibleCounts[g.cwd] = g.visibleCount
 	}
 
 	selectedSessionKey := ""
 	selectedGroupCWD := ""
+	selectedWasMoreRow := false
 	if row, ok := m.currentRow(); ok {
 		switch row.kind {
 		case sessionRowSession:
@@ -114,7 +165,8 @@ func (m SessionsModel) SetSessions(sessions []session.Session) SessionsModel {
 				selectedSessionKey = sessionKey(s)
 				selectedGroupCWD = sessionProjectDir(s)
 			}
-		case sessionRowGroup:
+		case sessionRowGroup, sessionRowMore:
+			selectedWasMoreRow = row.kind == sessionRowMore
 			if g, ok := m.groupForRow(row); ok {
 				selectedGroupCWD = g.cwd
 			}
@@ -122,10 +174,23 @@ func (m SessionsModel) SetSessions(sessions []session.Session) SessionsModel {
 	}
 
 	m.groups = groupSessionGroupsByCWD(sessions)
+	activeExists := m.activeSessionID == ""
 	for i := range m.groups {
 		if wasExpanded, ok := expanded[m.groups[i].cwd]; ok {
 			m.groups[i].expanded = wasExpanded
 		}
+		m.groups[i].visibleCount = initialSessionVisibleCount(len(m.groups[i].sessions))
+		if visibleCount, ok := visibleCounts[m.groups[i].cwd]; ok {
+			m.groups[i].visibleCount = clampSessionVisibleCount(visibleCount, len(m.groups[i].sessions))
+		}
+		for _, s := range m.groups[i].sessions {
+			if s.ID == m.activeSessionID {
+				activeExists = true
+			}
+		}
+	}
+	if !activeExists {
+		m.activeSessionID = ""
 	}
 
 	m.cursor = oldCursor
@@ -140,6 +205,15 @@ func (m SessionsModel) SetSessions(sessions []session.Session) SessionsModel {
 		}
 	}
 	if selectedGroupCWD != "" {
+		if selectedWasMoreRow {
+			if groupIdx, ok := m.findGroupIndexByCWD(selectedGroupCWD); ok {
+				if idx, ok := m.findMoreRowByGroup(groupIdx); ok {
+					m.cursor = idx
+					m.offset = oldOffset
+					return m.clampScroll()
+				}
+			}
+		}
 		if idx, ok := m.findGroupRowByCWD(selectedGroupCWD); ok {
 			m.cursor = idx
 			m.offset = oldOffset
@@ -164,7 +238,7 @@ func (m SessionsModel) Count() int {
 func (m SessionsModel) SelectedTitle() string {
 	if row, ok := m.currentRow(); ok {
 		switch row.kind {
-		case sessionRowGroup:
+		case sessionRowGroup, sessionRowMore:
 			if g, ok := m.groupForRow(row); ok {
 				return g.cwd
 			}
@@ -215,6 +289,8 @@ func (m SessionsModel) View() string {
 		return ""
 	}
 
+	scrollbarWidth := 2
+	bodyWidth := max(m.width-scrollbarWidth, 1)
 	lines := make([]string, 0, m.height)
 	available := m.height
 	if m.showFilterLine() {
@@ -222,33 +298,53 @@ func (m SessionsModel) View() string {
 		if !m.filtering && m.filter != "" {
 			filter = "filter: " + m.filter
 		}
-		lines = append(lines, sessionFilterStyle.Render(truncateCell(filter, m.width)))
+		lines = append(lines, padCell(sessionFilterStyle.Render(truncateCell(filter, bodyWidth)), bodyWidth)+strings.Repeat(" ", scrollbarWidth))
 		available--
 	}
 	if available <= 0 {
 		return strings.Join(lines, "\n")
 	}
 
+	bodyLines := make([]string, 0, available)
+	selectedLineFlags := make([]bool, 0, available)
 	if len(m.rows) == 0 {
 		text := "  (no sessions)"
 		if m.filter != "" {
 			text = "  (no matches)"
 		}
-		lines = append(lines, truncateCell(text, m.width))
-		return strings.Join(lines, "\n")
+		bodyLines = append(bodyLines, truncateCell(text, bodyWidth))
+		selectedLineFlags = append(selectedLineFlags, false)
+	} else {
+		used := 0
+		for i := m.offset; i < len(m.rows); i++ {
+			rowLines := m.renderRow(i, bodyWidth)
+			if len(rowLines) == 0 {
+				continue
+			}
+			if used+len(rowLines) > available {
+				break
+			}
+			bodyLines = append(bodyLines, rowLines...)
+			selected := i == m.cursor && !m.filtering
+			extendSelectedGutter := selected && m.rows[i].kind != sessionRowGroup
+			for range rowLines {
+				selectedLineFlags = append(selectedLineFlags, extendSelectedGutter)
+			}
+			used += len(rowLines)
+		}
 	}
 
-	used := 0
-	for i := m.offset; i < len(m.rows); i++ {
-		rowLines := m.renderRow(i)
-		if len(rowLines) == 0 {
-			continue
+	scrollbar := m.renderScrollbar(available, 1)
+	for i, line := range bodyLines {
+		scrollGlyph := " "
+		if i < len(scrollbar) {
+			scrollGlyph = scrollbar[i]
 		}
-		if used+len(rowLines) > available {
-			break
+		bar := strings.Repeat(" ", max(scrollbarWidth-1, 0)) + scrollGlyph
+		if i < len(selectedLineFlags) && selectedLineFlags[i] && scrollbarWidth > 0 {
+			bar = sessionSelectedTrailingFillStyle.Render(" ") + scrollGlyph
 		}
-		lines = append(lines, rowLines...)
-		used += len(rowLines)
+		lines = append(lines, padCell(truncateCell(line, bodyWidth), bodyWidth)+bar)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -292,9 +388,10 @@ func (m SessionsModel) moveLeft() SessionsModel {
 	switch row.kind {
 	case sessionRowGroup:
 		m.groups[row.groupIndex].expanded = false
+		m = m.resetGroupVisibleCount(row.groupIndex)
 		m = m.rebuildRows()
 		m.cursor = m.groupHeaderIndex(row.groupIndex)
-	case sessionRowSession:
+	case sessionRowSession, sessionRowMore:
 		m.cursor = m.groupHeaderIndex(row.groupIndex)
 	}
 	return m.clampScroll()
@@ -305,11 +402,15 @@ func (m SessionsModel) moveRight() (SessionsModel, tea.Cmd) {
 	if !ok {
 		return m.clampScroll(), nil
 	}
-	if row.kind == sessionRowGroup {
+	switch row.kind {
+	case sessionRowGroup:
 		m.groups[row.groupIndex].expanded = true
+		m = m.resetGroupVisibleCount(row.groupIndex)
 		m = m.rebuildRows()
 		m.cursor = m.groupHeaderIndex(row.groupIndex)
 		return m.clampScroll(), nil
+	case sessionRowMore:
+		return m.loadMore(row), nil
 	}
 	return m.openCurrentSession()
 }
@@ -319,20 +420,58 @@ func (m SessionsModel) activate() (SessionsModel, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if row.kind == sessionRowGroup {
+	switch row.kind {
+	case sessionRowGroup:
 		m.groups[row.groupIndex].expanded = !m.groups[row.groupIndex].expanded
+		m = m.resetGroupVisibleCount(row.groupIndex)
 		m = m.rebuildRows()
 		m.cursor = m.groupHeaderIndex(row.groupIndex)
 		return m.clampScroll(), nil
+	case sessionRowMore:
+		return m.loadMore(row), nil
 	}
 	return m.openCurrentSession()
 }
 
+func (m SessionsModel) resetGroupVisibleCount(groupIndex int) SessionsModel {
+	if groupIndex < 0 || groupIndex >= len(m.groups) {
+		return m
+	}
+	m.groups[groupIndex].visibleCount = initialSessionVisibleCount(len(m.groups[groupIndex].sessions))
+	return m
+}
+
+func (m SessionsModel) loadMore(row sessionRow) SessionsModel {
+	if row.groupIndex < 0 || row.groupIndex >= len(m.groups) {
+		return m.clampScroll()
+	}
+	group := &m.groups[row.groupIndex]
+	oldVisibleCount := group.visibleCount
+	group.visibleCount = clampSessionVisibleCount(group.visibleCount+defaultSessionGroupPageSize, len(group.sessions))
+	m = m.rebuildRows()
+	if moreIndex, ok := m.findMoreRowByGroup(row.groupIndex); ok {
+		m.cursor = moreIndex
+		return m.clampScroll()
+	}
+	m.cursor = min(m.groupHeaderIndex(row.groupIndex)+group.visibleCount, len(m.rows)-1)
+	if group.visibleCount == oldVisibleCount {
+		m.cursor = min(m.cursor, len(m.rows)-1)
+	}
+	return m.clampScroll()
+}
+
 func (m SessionsModel) openCurrentSession() (SessionsModel, tea.Cmd) {
 	if s, ok := m.Selected(); ok {
-		return m, func() tea.Msg { return sessionChosenMsg{id: s.ID, cwd: s.CWD} }
+		return m, func() tea.Msg { return sessionChosenMsg{id: s.ID, cwd: s.CWD, projectDir: sessionExplorerRoot(s)} }
 	}
 	return m, nil
+}
+
+func sessionExplorerRoot(s session.Session) string {
+	if s.ProjectDir != "" {
+		return s.ProjectDir
+	}
+	return s.CWD
 }
 
 func groupSessionGroupsByCWD(sessions []session.Session) []sessionGroup {
@@ -354,7 +493,7 @@ func groupSessionGroupsByCWD(sessions []session.Session) []sessionGroup {
 		sort.SliceStable(groupSessions, func(i, j int) bool {
 			return groupSessions[i].ModTime.After(groupSessions[j].ModTime)
 		})
-		groups = append(groups, sessionGroup{cwd: key, sessions: groupSessions, expanded: true})
+		groups = append(groups, sessionGroup{cwd: key, sessions: groupSessions, expanded: true, visibleCount: initialSessionVisibleCount(len(groupSessions))})
 	}
 	sort.SliceStable(groups, func(i, j int) bool {
 		return latestSessionTime(groups[i]).After(latestSessionTime(groups[j]))
@@ -390,9 +529,19 @@ func (m SessionsModel) rebuildRows() SessionsModel {
 		}
 
 		rows = append(rows, sessionRow{kind: sessionRowGroup, groupIndex: groupIndex})
-		if query != "" || group.expanded {
+		if query != "" {
 			for _, sessionIndex := range matchedSessions {
 				rows = append(rows, sessionRow{kind: sessionRowSession, groupIndex: groupIndex, sessionIndex: sessionIndex})
+			}
+			continue
+		}
+		if group.expanded {
+			visibleCount := clampSessionVisibleCount(group.visibleCount, len(matchedSessions))
+			for _, sessionIndex := range matchedSessions[:visibleCount] {
+				rows = append(rows, sessionRow{kind: sessionRowSession, groupIndex: groupIndex, sessionIndex: sessionIndex})
+			}
+			if visibleCount < len(matchedSessions) {
+				rows = append(rows, sessionRow{kind: sessionRowMore, groupIndex: groupIndex})
 			}
 		}
 	}
@@ -441,6 +590,18 @@ func (m SessionsModel) sessionForRow(row sessionRow) (session.Session, bool) {
 	return group.sessions[row.sessionIndex], true
 }
 
+func (m SessionsModel) groupHasActiveSession(group sessionGroup) bool {
+	if m.activeSessionID == "" {
+		return false
+	}
+	for _, s := range group.sessions {
+		if s.ID == m.activeSessionID {
+			return true
+		}
+	}
+	return false
+}
+
 func sessionKey(s session.Session) string {
 	if s.Path != "" {
 		return s.Path
@@ -472,6 +633,15 @@ func (m SessionsModel) findGroupRowByCWD(cwd string) (int, bool) {
 	return 0, false
 }
 
+func (m SessionsModel) findGroupIndexByCWD(cwd string) (int, bool) {
+	for i, group := range m.groups {
+		if group.cwd == cwd {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func (m SessionsModel) groupHeaderIndex(groupIndex int) int {
 	for i, row := range m.rows {
 		if row.kind == sessionRowGroup && row.groupIndex == groupIndex {
@@ -481,15 +651,30 @@ func (m SessionsModel) groupHeaderIndex(groupIndex int) int {
 	return m.cursor
 }
 
+func (m SessionsModel) findMoreRowByGroup(groupIndex int) (int, bool) {
+	for i, row := range m.rows {
+		if row.kind == sessionRowMore && row.groupIndex == groupIndex {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func (m SessionsModel) rowHeight(index int) int {
 	if index < 0 || index >= len(m.rows) {
 		return 0
 	}
 	row := m.rows[index]
-	if row.kind == sessionRowGroup {
+	switch row.kind {
+	case sessionRowGroup:
 		return 1
+	case sessionRowMore:
+		return 2
+	case sessionRowSession:
+		return 2
+	default:
+		return 0
 	}
-	return 2
 }
 
 func (m SessionsModel) clampScroll() SessionsModel {
@@ -544,7 +729,32 @@ func (m SessionsModel) showFilterLine() bool {
 	return m.filtering || m.filter != ""
 }
 
-func (m SessionsModel) renderRow(index int) []string {
+func (m SessionsModel) totalContentHeight() int {
+	if len(m.rows) == 0 {
+		return 1
+	}
+	return m.rowsHeight(0, len(m.rows)-1)
+}
+
+func (m SessionsModel) contentOffsetBeforeRow(index int) int {
+	if index <= 0 || len(m.rows) == 0 {
+		return 0
+	}
+	return m.rowsHeight(0, min(index, len(m.rows))-1)
+}
+
+func (m SessionsModel) renderScrollbar(viewportHeight, width int) []string {
+	return renderVerticalScrollbar(viewportHeight, m.totalContentHeight(), m.contentOffsetBeforeRow(m.offset), verticalScrollbarOptions{
+		Width:      width,
+		Track:      "│",
+		Thumb:      "┃",
+		TrackStyle: sessionScrollbarTrackStyle,
+		ThumbStyle: sessionScrollbarThumbStyle,
+		AlignRight: true,
+	})
+}
+
+func (m SessionsModel) renderRow(index, width int) []string {
 	row := m.rows[index]
 	selected := index == m.cursor && !m.filtering
 	switch row.kind {
@@ -553,20 +763,32 @@ func (m SessionsModel) renderRow(index int) []string {
 		if !ok {
 			return nil
 		}
-		return []string{renderSessionGroupHeader(group.cwd, m.width, selected, group.expanded)}
+		active := !selected && m.groupHasActiveSession(group)
+		return []string{renderSessionGroupHeader(group.cwd, len(group.sessions), width, selected, active, group.expanded)}
 	case sessionRowSession:
 		s, ok := m.sessionForRow(row)
 		if !ok {
 			return nil
 		}
-		lines := []string{renderSessionTitleLine(s.Title, relativeAge(time.Now(), s.ModTime), m.width, selected)}
-		subtitleLine := ""
+		active := s.ID == m.activeSessionID
+		age := relativeAge(time.Now(), s.ModTime)
+		lines := []string{renderSessionTitleLine(s.Title, age, width, selected, active)}
+		subtitleLine := renderSessionReservedSubtitleLine(width, selected)
 		if selected {
 			if subtitle := sessionSubtitle(s); subtitle != "" {
-				subtitleLine = renderSessionSubtitleLine(subtitle, m.width)
+				subtitleLine = renderSessionSubtitleLine(subtitle, age, width)
 			}
 		}
 		return append(lines, subtitleLine)
+	case sessionRowMore:
+		group, ok := m.groupForRow(row)
+		if !ok {
+			return nil
+		}
+		return []string{
+			renderSessionMoreRow(len(group.sessions)-group.visibleCount, width, selected),
+			renderSessionReservedSubtitleLine(width, selected),
+		}
 	default:
 		return nil
 	}
@@ -581,7 +803,23 @@ func projectDirLabel(dir string) string {
 	return filepath.Base(filepath.Clean(dir))
 }
 
-func renderSessionGroupHeader(dir string, width int, selected, expanded bool) string {
+func projectDirCountLabel(dir string, count int) string {
+	label := projectDirLabel(dir)
+	return fmt.Sprintf("%s (%d)", label, count)
+}
+
+func renderSessionMoreRow(remaining, width int, selected bool) string {
+	if width <= 0 {
+		return ""
+	}
+	text := fmt.Sprintf("  Load more (%d remaining)", max(remaining, 0))
+	if selected {
+		return sessionSelectedDescStyle.Render(padCell(truncateCell(text, width), width))
+	}
+	return sessionDescStyle.Render(truncateCell(text, width))
+}
+
+func renderSessionGroupHeader(dir string, count, width int, selected, active, expanded bool) string {
 	if width <= 0 {
 		return ""
 	}
@@ -592,16 +830,19 @@ func renderSessionGroupHeader(dir string, width int, selected, expanded bool) st
 	prefixWidth := lipgloss.Width(twisty)
 	text := twisty
 	if width > prefixWidth {
-		text += truncatePrefixCell(projectDirLabel(dir), width-prefixWidth)
+		text += truncatePrefixCell(projectDirCountLabel(dir, count), width-prefixWidth)
 	}
 	style := sessionGroupHeaderStyle
+	if active {
+		style = sessionActiveGroupHeaderStyle
+	}
 	if selected {
 		style = sessionSelectedGroupHeaderStyle
 	}
 	return style.Render(truncateCell(text, width))
 }
 
-func renderSessionTitleLine(title, age string, width int, selected bool) string {
+func renderSessionTitleLine(title, age string, width int, selected, active bool) string {
 	if width <= 0 {
 		return ""
 	}
@@ -612,13 +853,20 @@ func renderSessionTitleLine(title, age string, width int, selected bool) string 
 		if selected {
 			return sessionSelectedAgeStyle.Render(age)
 		}
+		if active {
+			return sessionActiveAgeStyle.Render(age)
+		}
 		return sessionAgeStyle.Render(age)
 	}
 
-	prefix := "  "
+	prefix := sessionRowPrefix(active)
 	style := sessionTitleStyle
 	ageStyle := sessionAgeStyle
-	fillStyle := lipgloss.NewStyle().Inline(true)
+	fillStyle := sessionNormalFillStyle
+	if active {
+		style = sessionActiveTitleStyle
+		ageStyle = sessionActiveAgeStyle
+	}
 	if selected {
 		style = sessionSelectedTitleStyle
 		ageStyle = sessionSelectedAgeStyle
@@ -634,12 +882,34 @@ func renderSessionTitleLine(title, age string, width int, selected bool) string 
 	return style.Render(left) + fillStyle.Render(strings.Repeat(" ", padding)) + ageStyle.Render(age)
 }
 
-func renderSessionSubtitleLine(subtitle string, width int) string {
+func renderSessionReservedSubtitleLine(width int, selected bool) string {
 	if width <= 0 {
 		return ""
 	}
-	line := padCell(truncateCell("  "+subtitle, width), width)
-	return sessionSelectedDescStyle.Render(line)
+	if selected {
+		return sessionSelectedFillStyle.Render(strings.Repeat(" ", width))
+	}
+	return strings.Repeat(" ", width)
+}
+
+func renderSessionSubtitleLine(subtitle, age string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	ageWidth := lipgloss.Width(age)
+	if width <= ageWidth {
+		return sessionSelectedFillStyle.Render(strings.Repeat(" ", width))
+	}
+	leftWidth := width - ageWidth
+	left := padCell(truncateCell(sessionRowPrefix(false)+subtitle, leftWidth), leftWidth)
+	return sessionSelectedDescStyle.Render(left) + sessionSelectedFillStyle.Render(strings.Repeat(" ", ageWidth))
+}
+
+func sessionRowPrefix(active bool) string {
+	if active {
+		return "│ "
+	}
+	return "  "
 }
 
 func sessionSubtitle(s session.Session) string {

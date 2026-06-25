@@ -1,17 +1,20 @@
-# cc-sidecar
+# ccdeck
 
-`cc-sidecar` is a terminal UI for browsing local Claude Code sessions and their
-working directories without putting session lists or file browsing output into a
+`ccdeck` is a zellij-first terminal UI for browsing local Claude Code sessions,
+project files, and selected file contents without pushing browsing output into a
 Claude Code conversation.
 
-It runs as a separate process from Claude Code:
+`ccdeck` is the only public entrypoint. Running it starts zellij directly and
+boots four coordinated panes inside one runtime:
 
-- left panel: Claude Code sessions
-- middle panel: directory tree for the selected session's working directory
-- right panel: syntax-highlighted file viewer with line numbers
+- `sessions`: browse local Claude Code sessions
+- `claude`: preview the Claude command for the selected session without running it
+- `file`: preview the file selected in explorer
+- `explorer`: browse the selected session's working tree
 
-It does **not** automatically resume sessions, control tmux, or embed Claude
-Code. When you select a session, it only shows the command you can run yourself.
+Selecting a session updates the linked panes automatically. The current
+implementation keeps the browser sidecar separate from the Claude Code
+conversation, while using zellij as the runtime shell.
 
 ## Build
 
@@ -20,7 +23,7 @@ This project uses Go 1.26+ and Bubble Tea v2.
 ```bash
 /usr/local/go/bin/go mod tidy
 /usr/local/go/bin/go test ./...
-/usr/local/go/bin/go build -buildvcs=false -o cc-sidecar .
+/usr/local/go/bin/go build -buildvcs=false -o ccdeck .
 ```
 
 `-buildvcs=false` is used because this directory may not be inside a complete
@@ -28,64 +31,62 @@ Git checkout, and recent Go versions try to stamp VCS metadata by default.
 
 ## Run
 
-```bash
-./cc-sidecar
-```
-
-Useful flags:
+Start the default deck:
 
 ```bash
-./cc-sidecar --help
-./cc-sidecar --projects-dir "$HOME/.claude/projects"
-./cc-sidecar --root /data00/home/gaolei.veew/sourcecode/cc-sidecar
-./cc-sidecar --no-alt-screen
+./ccdeck
+./ccdeck --projects-dir "$HOME/.claude/projects"
+./ccdeck --deck dev
 ```
+
+This launches zellij directly and boots one coordinated ccdeck runtime.
 
 ### Flags
 
 - `--projects-dir <dir>`: override the Claude Code projects directory. Defaults
   to `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects`.
-- `--root <dir>`: set the initial directory shown in the tree panel. If omitted,
-  the tree follows the currently highlighted session's working directory.
-- `--no-alt-screen`: disable alternate-screen rendering, useful for debugging or
-  capturing output.
-- `--alt-screen`: explicitly enable alternate-screen rendering. Enabled by
-  default.
+- `--deck <name>`: explicitly name the runtime. If omitted, ccdeck generates
+  one automatically.
+
+Alternate-screen is always enabled for the Bubble Tea panes.
 
 ## Key bindings
 
-Global:
-
-- `Tab`: focus next panel
-- `Shift+Tab`: focus previous panel
-- `?`: toggle help
-- `q` / `Ctrl+C`: quit
-
-Sessions panel:
+Sessions:
 
 - `↑` / `↓` or `j` / `k`: move selection
 - `/`: filter sessions
-- `Enter`: show `cd <cwd> && claude --resume <session-id>` in the status line
+- `Enter`: activate the selected session and sync Claude / explorer / file panes
 
-Tree panel:
+Explorer:
 
 - `↑` / `↓` or `j` / `k`: move selection
-- `Enter` / `l` / `→`: expand a directory or open a file in the viewer
-- `h` / `←`: collapse the current directory; if it is already collapsed, move to its parent directory
-- Uses fixed-width Nerd Font icons for folders and common file types. If icons render as squares, switch the terminal font to a Nerd Font; ASCII fallback support is kept in code for a future flag.
+- `Enter` / `l` / `→`: expand a directory, or select a file and notify file pane
+- `h` / `←`: collapse the current directory; if it is already collapsed, move to
+  its parent directory
+- Uses fixed-width Nerd Font icons for folders and common file types. If icons
+  render as squares, switch the terminal font to a Nerd Font.
 
-Viewer panel:
+File:
 
 - Uses Bubble Tea's viewport key bindings for scrolling.
+- `w`: toggle soft wrap.
+- `r`: reload the current file.
+
+Claude pane:
+
+- Waits for session activation from sessions pane.
+- Records the Claude command preview for the selected session without running it.
 
 ## Current scope
 
-This tool is intentionally a standalone browser. It does not:
+This tool intentionally keeps the browsing sidecar separate from the Claude Code
+conversation. It does not:
 
-- auto-run `claude --resume`
-- send commands into an existing Claude Code session
-- manage tmux panes
-- embed Claude Code inside the TUI
-- send session-list output into a Claude Code conversation
+- inject transcript raw content into Claude Code conversation context
+- proxy Claude Code terminal interaction inside Bubble Tea
+- persist deck state beyond the current zellij runtime
+- automatically interpret explorer/file output as conversation input
 
-Those integrations can be added later as a separate phase.
+The current implementation already starts zellij and links panes automatically.
+Internal pane modes remain implementation details behind the `ccdeck` entrypoint.

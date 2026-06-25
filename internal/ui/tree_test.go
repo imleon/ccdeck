@@ -3,9 +3,12 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"cc-sidecar/internal/gitstatus"
+	"charm.land/lipgloss/v2"
+
+	"ccdeck/internal/gitstatus"
 )
 
 // treeNodePaths 返回当前可见节点的 path 列表，便于断言。
@@ -137,6 +140,37 @@ func TestTreeSetRootClearsGitStatusOnRootChange(t *testing.T) {
 	}
 }
 
+func TestTreeViewRendersScrollbarWhenContentOverflows(t *testing.T) {
+	root := t.TempDir()
+	for i := range 8 {
+		path := filepath.Join(root, string(rune('a'+i))+".txt")
+		if err := os.WriteFile(path, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m := NewTree().SetRoot(root).SetSize(24, 3)
+	got := stripANSI(m.View(""))
+
+	if !strings.Contains(got, "┃") {
+		t.Fatalf("expected scrollbar thumb\n%s", got)
+	}
+}
+
+func TestTreeViewKeepsScrollbarGutterWhenContentFits(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(24, 3)
+	got := stripANSI(m.View(""))
+	line := strings.Split(got, "\n")[0]
+	if width := lipgloss.Width(line); width != 24 {
+		t.Fatalf("line width = %d, want 24: %q", width, line)
+	}
+}
+
 func TestTreeSetGitStatusAggregatesDirectoryStatus(t *testing.T) {
 	root := t.TempDir()
 	sub := filepath.Join(root, "sub")
@@ -149,12 +183,64 @@ func TestTreeSetGitStatusAggregatesDirectoryStatus(t *testing.T) {
 	}
 
 	m := NewTree().SetRoot(root)
-	m = m.SetGitStatus(map[string]gitstatus.Status{file: gitstatus.StatusModified}, root)
+	m = m.SetGitStatus(map[string]gitstatus.Status{file: gitstatus.StatusDeleted}, root)
 
-	if got := m.gitStatus[file]; got != gitstatus.StatusModified {
-		t.Fatalf("file status = %v, want Modified", got)
+	if got := m.gitStatus[file]; got != gitstatus.StatusDeleted {
+		t.Fatalf("file status = %v, want Deleted", got)
 	}
+	if got := m.gitStatus[sub]; got != gitstatus.StatusDeleted {
+		t.Fatalf("sub dir status = %v, want Deleted", got)
+	}
+}
+
+func TestTreeSetGitStatusAggregatesMixedDirectoryStatusAsModified(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	modFile := filepath.Join(sub, "a.go")
+	newFile := filepath.Join(sub, "b.go")
+	if err := os.WriteFile(modFile, []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newFile, []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root)
+	m = m.SetGitStatus(map[string]gitstatus.Status{
+		modFile: gitstatus.StatusModified,
+		newFile: gitstatus.StatusUntracked,
+	}, root)
+
 	if got := m.gitStatus[sub]; got != gitstatus.StatusModified {
 		t.Fatalf("sub dir status = %v, want Modified", got)
+	}
+}
+
+func TestTreeSetGitStatusAggregatesConflictDirectoryStatus(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	modFile := filepath.Join(sub, "a.go")
+	conflictFile := filepath.Join(sub, "b.go")
+	if err := os.WriteFile(modFile, []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conflictFile, []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root)
+	m = m.SetGitStatus(map[string]gitstatus.Status{
+		modFile:      gitstatus.StatusModified,
+		conflictFile: gitstatus.StatusConflict,
+	}, root)
+
+	if got := m.gitStatus[sub]; got != gitstatus.StatusConflict {
+		t.Fatalf("sub dir status = %v, want Conflict", got)
 	}
 }

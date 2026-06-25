@@ -1,4 +1,4 @@
-module cc-sidecar
+module ccdeck
 
 go 1.26.4
 

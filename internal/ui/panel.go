@@ -17,6 +17,72 @@ type Panel struct {
 	NoWrap  bool
 }
 
+const (
+	standaloneHeaderRows = 1
+	standaloneBodyPadX   = 1
+)
+
+var standaloneScrollbarBodyPadding = panePadding{Left: standaloneBodyPadX, Right: 0}
+
+type panePadding struct {
+	Left  int
+	Right int
+}
+
+type verticalScrollbarOptions struct {
+	Width      int
+	Track      string
+	Thumb      string
+	TrackStyle lipgloss.Style
+	ThumbStyle lipgloss.Style
+	AlignRight bool
+}
+
+func symmetricPanePadding(padX int) panePadding {
+	padX = max(padX, 0)
+	return panePadding{Left: padX, Right: padX}
+}
+
+func paneContentWidth(width int, padding panePadding) int {
+	return max(width-max(padding.Left, 0)-max(padding.Right, 0), 1)
+}
+
+func standaloneContentSize(width, height int) (int, int) {
+	return max(width, 1), max(height-standaloneHeaderRows, 1)
+}
+
+func standaloneInsetContentSize(width, height, padX int) (int, int) {
+	return standalonePaddedContentSize(width, height, symmetricPanePadding(padX))
+}
+
+func standalonePaddedContentSize(width, height int, padding panePadding) (int, int) {
+	return paneContentWidth(width, padding), max(height-standaloneHeaderRows, 1)
+}
+
+func renderStandalonePane(_ string, status, body string, width int) string {
+	w := max(width, 1)
+	if status == "" {
+		return body
+	}
+	statusLine := statusStyle.Width(w).Render(padCell(truncateCell(status, w), w))
+	return joinVertical(statusLine, body)
+}
+
+func renderStandalonePaneInset(_ string, status, body string, width, padX int) string {
+	return renderStandalonePanePadded(status, body, width, symmetricPanePadding(padX))
+}
+
+func renderStandalonePanePadded(status, body string, width int, padding panePadding) string {
+	w := max(width, 1)
+	inset := lipgloss.NewStyle().Padding(0, max(padding.Right, 0), 0, max(padding.Left, 0)).Width(w)
+	bodyBlock := inset.Render(fitBlock(body, paneContentWidth(w, padding), max(1, strings.Count(body, "\n")+1)))
+	if status == "" {
+		return bodyBlock
+	}
+	statusLine := statusStyle.Width(w).Render(padCell(truncateCell(status, w), w))
+	return joinVertical(statusLine, bodyBlock)
+}
+
 func renderPanel(p Panel) string {
 	contentWidth := panelContentWidth(p.Width)
 	contentHeight := panelContentHeight(p.Height)
@@ -74,6 +140,47 @@ func defaultString(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+func renderVerticalScrollbar(viewportHeight, totalHeight, topOffset int, opts verticalScrollbarOptions) []string {
+	if viewportHeight <= 0 {
+		return nil
+	}
+	width := max(opts.Width, 1)
+	bars := make([]string, viewportHeight)
+	for i := range bars {
+		bars[i] = strings.Repeat(" ", width)
+	}
+	if totalHeight <= viewportHeight {
+		return bars
+	}
+
+	track := defaultString(opts.Track, "│")
+	thumb := defaultString(opts.Thumb, "┃")
+	thumbHeight := min(max(1, viewportHeight*viewportHeight/totalHeight), viewportHeight)
+	maxTop := max(totalHeight-viewportHeight, 1)
+	thumbTop := max(topOffset, 0) * (viewportHeight - thumbHeight) / maxTop
+	for i := range bars {
+		glyph := track
+		style := opts.TrackStyle
+		if i >= thumbTop && i < thumbTop+thumbHeight {
+			glyph = thumb
+			style = opts.ThumbStyle
+		}
+		bars[i] = renderScrollbarCell(glyph, width, opts.AlignRight, style)
+	}
+	return bars
+}
+
+func renderScrollbarCell(glyph string, width int, alignRight bool, style lipgloss.Style) string {
+	cell := truncateCell(glyph, width)
+	pad := max(width-lipgloss.Width(cell), 0)
+	if alignRight {
+		cell = strings.Repeat(" ", pad) + cell
+	} else {
+		cell += strings.Repeat(" ", pad)
+	}
+	return style.Render(cell)
 }
 
 func truncateCell(s string, maxWidth int) string {

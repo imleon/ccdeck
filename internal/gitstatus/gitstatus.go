@@ -40,33 +40,11 @@ func (s Status) Mark() string {
 	case StatusRenamed:
 		return "R"
 	case StatusUntracked:
-		return "?"
+		return "A"
 	case StatusConflict:
 		return "U"
 	default:
 		return ""
-	}
-}
-
-// rank orders statuses for directory aggregation: a parent directory shows the
-// highest-ranked status among its descendants. Conflict dominates, untracked is
-// weakest among the "interesting" states.
-func (s Status) rank() int {
-	switch s {
-	case StatusConflict:
-		return 5
-	case StatusDeleted:
-		return 4
-	case StatusRenamed:
-		return 3
-	case StatusAdded:
-		return 2
-	case StatusModified:
-		return 1
-	case StatusUntracked:
-		return 0
-	default:
-		return -1
 	}
 }
 
@@ -338,21 +316,28 @@ func classify(x, y byte) Status {
 	}
 }
 
-// Aggregate folds file statuses up into their ancestor directories: each
-// directory strictly below root receives the highest-ranked status among the
-// files beneath it. The returned map is keyed by absolute directory path; root
-// itself is never included (the tree renders root's children, not root).
+// Aggregate folds file statuses up into their ancestor directories. Files keep
+// their exact git state. A directory with one kind of descendant change shows
+// that status, a directory with multiple non-conflict change kinds shows
+// modified, and conflict dominates everything. The returned map is keyed by
+// absolute directory path; root itself is never included (the tree renders
+// root's children, not root).
 //
 // files is the per-file map (absolute paths). root bounds the walk so we never
 // climb above the repository.
 func Aggregate(files map[string]Status, root string) map[string]Status {
-	dirs := make(map[string]Status)
+	type aggregateState struct {
+		status Status
+		seen   Status
+	}
+
+	states := make(map[string]aggregateState)
 	if root == "" {
-		return dirs
+		return map[string]Status{}
 	}
 	cleanRoot := filepath.Clean(root)
 	for path, st := range files {
-		if st.rank() < 0 {
+		if st == StatusNone {
 			continue
 		}
 		dir := filepath.Dir(path)
@@ -360,14 +345,32 @@ func Aggregate(files map[string]Status, root string) map[string]Status {
 			if dir == cleanRoot || !strings.HasPrefix(dir, cleanRoot) {
 				break
 			}
-			if cur, ok := dirs[dir]; !ok || st.rank() > cur.rank() {
-				dirs[dir] = st
+			state := states[dir]
+			switch {
+			case state.status == StatusConflict:
+			case st == StatusConflict:
+				state.status = StatusConflict
+			case state.status == StatusModified:
+			case state.seen == StatusNone:
+				state.seen = st
+				state.status = st
+			case state.seen != st:
+				state.status = StatusModified
 			}
+			states[dir] = state
+
 			parent := filepath.Dir(dir)
 			if parent == dir {
 				break
 			}
 			dir = parent
+		}
+	}
+
+	dirs := make(map[string]Status, len(states))
+	for dir, state := range states {
+		if state.status != StatusNone {
+			dirs[dir] = state.status
 		}
 	}
 	return dirs

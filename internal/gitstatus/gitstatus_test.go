@@ -68,24 +68,24 @@ func TestClassify(t *testing.T) {
 func TestAggregate(t *testing.T) {
 	root := "/repo"
 	files := map[string]Status{
-		"/repo/a/b/mod.go":   StatusModified,
-		"/repo/a/c/new.go":   StatusUntracked,
-		"/repo/a/d/clash.go": StatusConflict,
+		"/repo/deleted/a.go":    StatusDeleted,
+		"/repo/mixed/mod.go":    StatusModified,
+		"/repo/mixed/new.go":    StatusUntracked,
+		"/repo/conflict/mod.go": StatusModified,
+		"/repo/conflict/u.go":   StatusConflict,
 	}
 	dirs := Aggregate(files, root)
 
-	// /repo/a sees Conflict (highest rank among descendants).
-	if dirs["/repo/a"] != StatusConflict {
-		t.Errorf("/repo/a = %v, want Conflict", dirs["/repo/a"])
+	if dirs["/repo/deleted"] != StatusDeleted {
+		t.Errorf("/repo/deleted = %v, want Deleted", dirs["/repo/deleted"])
 	}
-	if dirs["/repo/a/b"] != StatusModified {
-		t.Errorf("/repo/a/b = %v, want Modified", dirs["/repo/a/b"])
+	if dirs["/repo/mixed"] != StatusModified {
+		t.Errorf("/repo/mixed = %v, want Modified", dirs["/repo/mixed"])
 	}
-	if dirs["/repo/a/c"] != StatusUntracked {
-		t.Errorf("/repo/a/c = %v, want Untracked", dirs["/repo/a/c"])
+	if dirs["/repo/conflict"] != StatusConflict {
+		t.Errorf("/repo/conflict = %v, want Conflict", dirs["/repo/conflict"])
 	}
-	// root itself is not aggregated.
-	if _, ok := dirs["/repo"]; ok {
+	if _, ok := dirs[root]; ok {
 		t.Error("root should not appear in aggregated dirs")
 	}
 }

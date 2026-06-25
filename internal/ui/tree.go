@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"cc-sidecar/internal/gitstatus"
+	"ccdeck/internal/gitstatus"
 )
 
 // treeNode 是目录树里的一个节点（文件或目录）。
@@ -22,22 +22,22 @@ type treeNode struct {
 	expanded bool
 }
 
-// treeSelectFileMsg 在树里选中一个文件时发出，root 转给 viewer 加载。
+// treeSelectFileMsg 在树里选中一个文件时发出，由 Explorer 转为产品层消息。
 type treeSelectFileMsg struct {
 	path string
 }
 
-// TreeModel 中栏：目录树，浏览选中 session 的 cwd 下的文件。
+// TreeModel renders a directory tree rooted at a configured directory.
 type TreeModel struct {
-	root   string     // 根目录（取自选中 session 的 cwd）
+	root   string     // 根目录
 	nodes  []treeNode // 当前展开后可见的扁平节点列表
 	cursor int
 	width  int
 	height int
 	offset int // 滚动偏移
 
-	// gitStatus 合并了文件与目录的 git 状态，键为绝对路径。由 root 注入，
-	// 渲染时按节点 path 查表。nil/缺失表示干净或无 git。
+	// gitStatus 合并了文件精确状态与目录聚合状态，键为绝对路径。由 root
+	// 注入，渲染时按节点 path 查表。nil/缺失表示干净或无 git。
 	gitStatus map[string]gitstatus.Status
 }
 
@@ -430,7 +430,7 @@ func (m TreeModel) Update(msg tea.Msg) (TreeModel, tea.Cmd) {
 				if node.isDir {
 					return m.toggle(), nil
 				}
-				// 文件 → 通知 root 加载到 viewer
+				// 文件 → 通知 Explorer 打开文件
 				return m, func() tea.Msg { return treeSelectFileMsg{path: node.path} }
 			}
 		case "left", "h":
@@ -486,27 +486,44 @@ func (m TreeModel) View(openedPath string) string {
 	if len(m.nodes) == 0 {
 		return "  (空目录)"
 	}
-	var b strings.Builder
+	scrollbarWidth := 2
+	bodyWidth := max(m.width-scrollbarWidth, 1)
 	cleanOpenedPath := ""
 	if openedPath != "" {
 		cleanOpenedPath = filepath.Clean(openedPath)
 	}
 	end := min(m.offset+m.height, len(m.nodes))
+	lines := make([]string, 0, end-m.offset)
 	for i := m.offset; i < end; i++ {
 		n := m.nodes[i]
 		isCursor := i == m.cursor
 		isOpened := cleanOpenedPath != "" && !n.isDir && filepath.Clean(n.path) == cleanOpenedPath
-		b.WriteString(m.renderLine(n, isCursor, isOpened))
-		b.WriteByte('\n')
+		lines = append(lines, m.renderLine(n, bodyWidth, isCursor, isOpened))
 	}
-	return b.String()
+	scrollbar := renderTreeScrollbar(m.height, len(m.nodes), m.offset, scrollbarWidth)
+	for i, line := range lines {
+		bar := strings.Repeat(" ", scrollbarWidth)
+		if i < len(scrollbar) {
+			bar = scrollbar[i]
+		}
+		lines[i] = padCell(truncateCell(line, bodyWidth), bodyWidth) + bar
+	}
+	return strings.Join(lines, "\n")
 }
 
-func (m TreeModel) renderLine(n treeNode, isCursor, isOpened bool) string {
-	width := m.width - 1
-	if width < 1 {
-		width = 1
-	}
+func renderTreeScrollbar(viewportHeight, totalHeight, topOffset, width int) []string {
+	return renderVerticalScrollbar(viewportHeight, totalHeight, topOffset, verticalScrollbarOptions{
+		Width:      width,
+		Track:      "│",
+		Thumb:      "┃",
+		TrackStyle: sessionScrollbarTrackStyle,
+		ThumbStyle: sessionScrollbarThumbStyle,
+		AlignRight: true,
+	})
+}
+
+func (m TreeModel) renderLine(n treeNode, bodyWidth int, isCursor, isOpened bool) string {
+	width := max(bodyWidth-1, 1)
 	status := m.nodeStatus(n)
 	mark := status.Mark()
 
@@ -538,12 +555,12 @@ func (m TreeModel) renderLine(n treeNode, isCursor, isOpened bool) string {
 	}
 	line = " " + line
 	if isCursor {
-		return treeCursorStyle.Render(truncateCell(line, m.width))
+		return treeCursorStyle.Render(truncateCell(line, bodyWidth))
 	}
 	if isOpened {
-		return treeOpenedFileStyle.Render(truncateCell(line, m.width))
+		return treeOpenedFileStyle.Render(truncateCell(line, bodyWidth))
 	}
-	return truncateCell(line, m.width)
+	return truncateCell(line, bodyWidth)
 }
 
 func (m TreeModel) nodeStatus(n treeNode) gitstatus.Status {
