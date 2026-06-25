@@ -307,6 +307,7 @@ func (m SessionsModel) View() string {
 
 	bodyLines := make([]string, 0, available)
 	selectedLineFlags := make([]bool, 0, available)
+	activeLineFlags := make([]bool, 0, available)
 	if len(m.rows) == 0 {
 		text := "  (no sessions)"
 		if m.filter != "" {
@@ -314,6 +315,7 @@ func (m SessionsModel) View() string {
 		}
 		bodyLines = append(bodyLines, truncateCell(text, bodyWidth))
 		selectedLineFlags = append(selectedLineFlags, false)
+		activeLineFlags = append(activeLineFlags, false)
 	} else {
 		used := 0
 		for i := m.offset; i < len(m.rows); i++ {
@@ -326,9 +328,17 @@ func (m SessionsModel) View() string {
 			}
 			bodyLines = append(bodyLines, rowLines...)
 			selected := i == m.cursor && !m.filtering
+			active := !selected && m.rows[i].kind == sessionRowSession
+			if active {
+				if s, ok := m.sessionForRow(m.rows[i]); !ok || s.ID != m.activeSessionID {
+					active = false
+				}
+			}
 			extendSelectedGutter := selected && m.rows[i].kind != sessionRowGroup
+			extendActiveGutter := active
 			for range rowLines {
 				selectedLineFlags = append(selectedLineFlags, extendSelectedGutter)
+				activeLineFlags = append(activeLineFlags, extendActiveGutter)
 			}
 			used += len(rowLines)
 		}
@@ -343,6 +353,9 @@ func (m SessionsModel) View() string {
 		bar := strings.Repeat(" ", max(scrollbarWidth-1, 0)) + scrollGlyph
 		if i < len(selectedLineFlags) && selectedLineFlags[i] && scrollbarWidth > 0 {
 			bar = sessionSelectedTrailingFillStyle.Render(" ") + scrollGlyph
+		}
+		if i < len(activeLineFlags) && activeLineFlags[i] && scrollbarWidth > 0 {
+			bar = sessionActiveTrailingFillStyle.Render(" ") + scrollGlyph
 		}
 		lines = append(lines, padCell(truncateCell(line, bodyWidth), bodyWidth)+bar)
 	}
@@ -773,10 +786,10 @@ func (m SessionsModel) renderRow(index, width int) []string {
 		active := s.ID == m.activeSessionID
 		age := relativeAge(time.Now(), s.ModTime)
 		lines := []string{renderSessionTitleLine(s.Title, age, width, selected, active)}
-		subtitleLine := renderSessionReservedSubtitleLine(width, selected)
-		if selected {
+		subtitleLine := renderSessionReservedSubtitleLine(width, selected, active)
+		if selected || active {
 			if subtitle := sessionSubtitle(s); subtitle != "" {
-				subtitleLine = renderSessionSubtitleLine(subtitle, age, width)
+				subtitleLine = renderSessionSubtitleLine(subtitle, age, width, selected, active)
 			}
 		}
 		return append(lines, subtitleLine)
@@ -787,7 +800,7 @@ func (m SessionsModel) renderRow(index, width int) []string {
 		}
 		return []string{
 			renderSessionMoreRow(len(group.sessions)-group.visibleCount, width, selected),
-			renderSessionReservedSubtitleLine(width, selected),
+			renderSessionReservedSubtitleLine(width, selected, false),
 		}
 	default:
 		return nil
@@ -866,6 +879,7 @@ func renderSessionTitleLine(title, age string, width int, selected, active bool)
 	if active {
 		style = sessionActiveTitleStyle
 		ageStyle = sessionActiveAgeStyle
+		fillStyle = sessionActiveFillStyle
 	}
 	if selected {
 		style = sessionSelectedTitleStyle
@@ -882,33 +896,39 @@ func renderSessionTitleLine(title, age string, width int, selected, active bool)
 	return style.Render(left) + fillStyle.Render(strings.Repeat(" ", padding)) + ageStyle.Render(age)
 }
 
-func renderSessionReservedSubtitleLine(width int, selected bool) string {
+func renderSessionReservedSubtitleLine(width int, selected, active bool) string {
 	if width <= 0 {
 		return ""
 	}
 	if selected {
 		return sessionSelectedFillStyle.Render(strings.Repeat(" ", width))
 	}
+	if active {
+		return sessionActiveFillStyle.Render(strings.Repeat(" ", width))
+	}
 	return strings.Repeat(" ", width)
 }
 
-func renderSessionSubtitleLine(subtitle, age string, width int) string {
+func renderSessionSubtitleLine(subtitle, age string, width int, selected, active bool) string {
 	if width <= 0 {
 		return ""
 	}
 	ageWidth := lipgloss.Width(age)
+	fillStyle := sessionActiveFillStyle
+	descStyle := sessionActiveDescStyle
+	if selected {
+		fillStyle = sessionSelectedFillStyle
+		descStyle = sessionSelectedDescStyle
+	}
 	if width <= ageWidth {
-		return sessionSelectedFillStyle.Render(strings.Repeat(" ", width))
+		return fillStyle.Render(strings.Repeat(" ", width))
 	}
 	leftWidth := width - ageWidth
 	left := padCell(truncateCell(sessionRowPrefix(false)+subtitle, leftWidth), leftWidth)
-	return sessionSelectedDescStyle.Render(left) + sessionSelectedFillStyle.Render(strings.Repeat(" ", ageWidth))
+	return descStyle.Render(left) + fillStyle.Render(strings.Repeat(" ", ageWidth))
 }
 
-func sessionRowPrefix(active bool) string {
-	if active {
-		return "│ "
-	}
+func sessionRowPrefix(_ bool) string {
 	return "  "
 }
 

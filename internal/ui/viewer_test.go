@@ -170,15 +170,19 @@ func TestViewerInlineDiffChangedRowsHaveBackground(t *testing.T) {
 		},
 	})
 
-	got := viewer.View()
-	if !strings.Contains(got, viewerDiffDeletedStyle.Render("2-│ func old() {}                     ")) {
-		t.Fatalf("deleted line should include body background\n%q", got)
+	raw := viewer.View()
+	got := stripANSI(raw)
+	if raw == got {
+		t.Fatalf("diff mode should keep syntax/diff ANSI highlighting\n%s", got)
 	}
-	if !strings.Contains(got, viewerDiffAddedStyle.Render("3+│ func new() {}                     ")) {
-		t.Fatalf("added line should include body background\n%q", got)
+	if !strings.Contains(raw, applyANSIBackground("2-│ func old() {}                     ", viewerDiffDeletedBG)) {
+		t.Fatalf("deleted line should include body background\n%q", raw)
 	}
-	if strings.Contains(got, viewerDiffAddedStyle.Render("1 │ package a")) || strings.Contains(got, viewerDiffDeletedStyle.Render("1 │ package a")) {
-		t.Fatalf("context line should not use diff background\n%q", got)
+	if !strings.Contains(raw, applyANSIBackground("3+│ func new() {}                     ", viewerDiffAddedBG)) {
+		t.Fatalf("added line should include body background\n%q", raw)
+	}
+	if strings.Contains(raw, applyANSIBackground("1 │ package a", viewerDiffAddedBG)) || strings.Contains(raw, applyANSIBackground("1 │ package a", viewerDiffDeletedBG)) {
+		t.Fatalf("context line should not use diff background\n%q", raw)
 	}
 }
 
@@ -246,7 +250,7 @@ func TestViewerInlineDiffSoftWrapContinuationHasBlankMarker(t *testing.T) {
 	if strings.Contains(got, " +│ ijklmnop") {
 		t.Fatalf("wrapped continuation should not repeat marker\n%s", got)
 	}
-	if !strings.Contains(raw, viewerDiffAddedStyle.Render("  │ ijklmnop")) {
+	if !strings.Contains(raw, applyANSIBackground("  │ ijklmnop", viewerDiffAddedBG)) {
 		t.Fatalf("wrapped continuation should keep changed-line background\n%q", raw)
 	}
 }

@@ -37,9 +37,10 @@ var panelFooterActiveStyle = lipgloss.NewStyle().
 
 var sessionGroupHeaderStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("179"))
+	Foreground(lipgloss.Color("180"))
 
-var sessionSelectedBGColor = lipgloss.Color("#3a2f29")
+var sessionSelectedBGColor = lipgloss.Color("#4a3a32")
+var sessionActiveBGColor = lipgloss.Color("#2a2421")
 
 var sessionSelectedGroupHeaderStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("254")).
@@ -48,7 +49,7 @@ var sessionSelectedGroupHeaderStyle = lipgloss.NewStyle().
 
 var sessionActiveGroupHeaderStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("215"))
+	Foreground(lipgloss.Color("180"))
 
 var sessionTitleStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("252"))
@@ -60,7 +61,9 @@ var sessionSelectedTitleStyle = lipgloss.NewStyle().
 
 var sessionActiveTitleStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(lipgloss.Color("117"))
+	Foreground(lipgloss.Color("180")).
+	Background(sessionActiveBGColor).
+	Inline(true)
 
 var sessionAgeStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("240"))
@@ -71,7 +74,13 @@ var sessionSelectedAgeStyle = lipgloss.NewStyle().
 	Inline(true)
 
 var sessionActiveAgeStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("117"))
+	Foreground(lipgloss.Color("250")).
+	Background(sessionActiveBGColor).
+	Inline(true)
+
+var sessionActiveFillStyle = lipgloss.NewStyle().
+	Background(sessionActiveBGColor).
+	Inline(true)
 
 var sessionNormalFillStyle = lipgloss.NewStyle().Inline(true)
 
@@ -84,6 +93,11 @@ var sessionSelectedTrailingFillStyle = lipgloss.NewStyle().
 	Background(sessionSelectedBGColor).
 	Inline(true)
 
+var sessionActiveTrailingFillStyle = lipgloss.NewStyle().
+	Foreground(sessionActiveBGColor).
+	Background(sessionActiveBGColor).
+	Inline(true)
+
 var sessionDescStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("244")).
 	Inline(true)
@@ -91,6 +105,11 @@ var sessionDescStyle = lipgloss.NewStyle().
 var sessionSelectedDescStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("244")).
 	Background(sessionSelectedBGColor).
+	Inline(true)
+
+var sessionActiveDescStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("244")).
+	Background(sessionActiveBGColor).
 	Inline(true)
 
 var sessionFilterStyle = lipgloss.NewStyle().
@@ -153,12 +172,10 @@ var (
 )
 
 var viewerDiffAddedStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("70")).
 	Background(viewerDiffAddedBG).
 	Inline(true)
 
 var viewerDiffDeletedStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("167")).
 	Background(viewerDiffDeletedBG).
 	Inline(true)
 

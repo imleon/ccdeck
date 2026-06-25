@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,7 +138,8 @@ func renderFileMsg(path string, requestID uint64, preserveScroll bool) loadFileM
 		}
 
 		if diff, err := gitstatus.InlineDiff(path); err == nil && diff.HasDiff {
-			content := renderInlineDiff(diff.Lines)
+			plain := renderInlineDiff(diff.Lines)
+			content := highlightContent(path, plain)
 			lineCount := len(diff.Lines)
 			return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, diffKinds: diffLineKinds(diff.Lines), message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
 		}
@@ -149,7 +151,8 @@ func renderFileMsg(path string, requestID uint64, preserveScroll bool) loadFileM
 	}
 
 	if diff, err := gitstatus.InlineDiff(path); err == nil && diff.HasDiff {
-		content := renderInlineDiff(diff.Lines)
+		plain := renderInlineDiff(diff.Lines)
+		content := highlightContent(path, plain)
 		lineCount := len(diff.Lines)
 		return loadFileMsg{requestID: requestID, path: path, content: content, state: viewerLoaded, lineCount: lineCount, diffKinds: diffLineKinds(diff.Lines), message: fmt.Sprintf("%d lines · git changes", lineCount), preserveScroll: preserveScroll}
 	}
@@ -254,10 +257,30 @@ func viewerDiffLineStyle(kind gitstatus.DiffLineKind) (lipgloss.Style, bool) {
 
 func renderViewerBodyLine(line string, bodyWidth int, kind gitstatus.DiffLineKind) string {
 	line = padCell(truncateCell(line, bodyWidth), bodyWidth)
-	if style, ok := viewerDiffLineStyle(kind); ok {
-		return style.Render(line)
+	if bg, ok := viewerDiffBackground(kind); ok {
+		return applyANSIBackground(line, bg)
 	}
 	return line
+}
+
+func viewerDiffBackground(kind gitstatus.DiffLineKind) (color.Color, bool) {
+	switch kind {
+	case gitstatus.DiffLineAdded:
+		return viewerDiffAddedBG, true
+	case gitstatus.DiffLineDeleted:
+		return viewerDiffDeletedBG, true
+	default:
+		return nil, false
+	}
+}
+
+func applyANSIBackground(line string, bg color.Color) string {
+	background := lipgloss.NewStyle().Background(bg).Inline(true).Render("")
+	reset := "\x1b[0m"
+	if background == "" {
+		return line
+	}
+	return background + strings.ReplaceAll(line, reset, reset+background) + reset
 }
 
 func (m ViewerModel) Update(msg tea.Msg) (ViewerModel, tea.Cmd) {

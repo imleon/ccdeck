@@ -116,7 +116,7 @@ func TestRenderSessionTitleLineKeepsAgeWhenNarrow(t *testing.T) {
 }
 
 func TestRenderSessionSubtitleLineReservesAgeColumn(t *testing.T) {
-	line := renderSessionSubtitleLine("a very long selected session subtitle", "15D", 14)
+	line := renderSessionSubtitleLine("a very long selected session subtitle", "15D", 14, true, false)
 	plain := stripANSI(line)
 
 	if width := lipgloss.Width(plain); width != 14 {
@@ -137,8 +137,8 @@ func TestRenderActiveSessionTitleLineKeepsAgeWhenNarrow(t *testing.T) {
 	if width := lipgloss.Width(plain); width > 8 {
 		t.Fatalf("active title line width = %d, want <= 8: %q", width, plain)
 	}
-	if !strings.HasPrefix(plain, "│") {
-		t.Fatalf("active title line should render left guide, got %q", plain)
+	if strings.HasPrefix(plain, "│") {
+		t.Fatalf("active title line should not render left guide, got %q", plain)
 	}
 	if !strings.HasSuffix(plain, "15D") {
 		t.Fatalf("active title line should keep full age at right edge, got %q", plain)
@@ -146,7 +146,7 @@ func TestRenderActiveSessionTitleLineKeepsAgeWhenNarrow(t *testing.T) {
 }
 
 func TestRenderReservedSubtitleLineUsesPlainSpaces(t *testing.T) {
-	got := renderSessionReservedSubtitleLine(14, false)
+	got := renderSessionReservedSubtitleLine(14, false, false)
 	want := strings.Repeat(" ", 14)
 	if got != want {
 		t.Fatalf("reserved subtitle line = %q, want %q", got, want)
@@ -154,7 +154,7 @@ func TestRenderReservedSubtitleLineUsesPlainSpaces(t *testing.T) {
 }
 
 func TestRenderReservedSubtitleLineHighlightsSelectedRow(t *testing.T) {
-	line := renderSessionReservedSubtitleLine(14, true)
+	line := renderSessionReservedSubtitleLine(14, true, false)
 	if lipgloss.Width(stripANSI(line)) != 14 {
 		t.Fatalf("reserved subtitle line width = %d, want 14", lipgloss.Width(stripANSI(line)))
 	}
@@ -179,7 +179,7 @@ func TestLoadMoreReservedLineHighlightsSelectedRow(t *testing.T) {
 }
 
 func TestRenderSessionSubtitleLineOmitsActiveGuide(t *testing.T) {
-	line := renderSessionSubtitleLine("a very long selected session subtitle", "15D", 14)
+	line := renderSessionSubtitleLine("a very long selected session subtitle", "15D", 14, true, false)
 	plain := stripANSI(line)
 
 	if width := lipgloss.Width(plain); width != 14 {
@@ -237,8 +237,8 @@ func TestSessionActiveAndSelectedStylePrecedence(t *testing.T) {
 	if selected == active {
 		t.Fatal("selected and active title styles should differ")
 	}
-	if stripANSI(both) == stripANSI(selected) || !strings.HasPrefix(stripANSI(both), "│") {
-		t.Fatalf("selected active row should keep selected styling with active guide, got %q", stripANSI(both))
+	if both != selected {
+		t.Fatalf("selected active row should match selected styling when guide is removed, got %q vs %q", both, selected)
 	}
 
 	selectedGroup := renderSessionGroupHeader("/repo/project", 1, 24, true, false, true)
