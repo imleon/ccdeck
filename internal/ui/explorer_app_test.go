@@ -27,8 +27,11 @@ func TestExplorerAppOpenFileOnlyUpdatesSelection(t *testing.T) {
 	if got.openedPath != file {
 		t.Fatalf("openedPath = %q, want %q", got.openedPath, file)
 	}
-	if !strings.Contains(got.statusText(), "selected file:") {
-		t.Fatalf("status = %q", got.statusText())
+	if strings.Contains(got.statusText(), "selected file:") {
+		t.Fatalf("status should not show selected file: %q", got.statusText())
+	}
+	if got.statusText() != projectDirLabel(root) {
+		t.Fatalf("status = %q, want %q", got.statusText(), projectDirLabel(root))
 	}
 }
 
@@ -47,6 +50,26 @@ func TestExplorerAppLinkedRootSetsRoot(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("linked root should schedule git refresh or IPC wait command")
+	}
+	if got.statusText() != projectDirLabel(root) {
+		t.Fatalf("status = %q, want %q", got.statusText(), projectDirLabel(root))
+	}
+}
+
+func TestExplorerAppLinkedRootClearsOpenedPathEvenWhenRootMatches(t *testing.T) {
+	root := t.TempDir()
+	oldFile := filepath.Join(root, "old.go")
+	m := NewExplorerApp(ExplorerAppOptions{GroupName: "dev", RefreshInterval: time.Hour})
+	m.explorer = m.explorer.SetRoot(root)
+	m.openedPath = oldFile
+
+	model, cmd := m.Update(ipcSetRootMsg{path: root, sessionID: "abc"})
+	got := model.(ExplorerAppModel)
+	if got.openedPath != "" {
+		t.Fatalf("openedPath = %q, want empty", got.openedPath)
+	}
+	if cmd != nil {
+		t.Fatal("same-root linked root should not schedule extra work")
 	}
 }
 
@@ -70,10 +93,11 @@ func TestExplorerAppAppliesGitStatusForCurrentRoot(t *testing.T) {
 	m.explorer = m.explorer.SetRoot(root)
 	model, cmd := m.Update(gitStatusRefreshedMsg{
 		explorerRoot: root,
-		result: gitstatus.Result{
+		repoRoots:    []string{filepath.Clean(root)},
+		results: []gitstatus.Result{{
 			Root:  root,
 			Files: map[string]gitstatus.Status{file: gitstatus.StatusModified},
-		},
+		}},
 	})
 	if cmd != nil {
 		t.Fatal("current git status should not return command")
@@ -81,6 +105,41 @@ func TestExplorerAppAppliesGitStatusForCurrentRoot(t *testing.T) {
 	got := model.(ExplorerAppModel)
 	if got.explorer.tree.gitStatus[file] != gitstatus.StatusModified {
 		t.Fatalf("file status = %v, want Modified", got.explorer.tree.gitStatus[file])
+	}
+}
+
+func TestExplorerAppAppliesNestedGitStatusOverlay(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	parentFile := filepath.Join(root, "parent.go")
+	childFile := filepath.Join(nested, "child.go")
+	writeTestFile(t, parentFile)
+	writeTestFile(t, childFile)
+	if err := os.Mkdir(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewExplorerApp(ExplorerAppOptions{GroupName: "dev", RefreshInterval: time.Hour})
+	m.explorer = m.explorer.SetRoot(root)
+	model, cmd := m.Update(gitStatusRefreshedMsg{
+		explorerRoot: root,
+		repoRoots:    []string{filepath.Clean(root), filepath.Clean(nested)},
+		results: []gitstatus.Result{
+			{Root: root, Files: map[string]gitstatus.Status{parentFile: gitstatus.StatusModified, childFile: gitstatus.StatusDeleted}},
+			{Root: nested, Files: map[string]gitstatus.Status{childFile: gitstatus.StatusAdded}},
+		},
+	})
+	if cmd != nil {
+		t.Fatal("current git status should not return command")
+	}
+	got := model.(ExplorerAppModel)
+	if got.explorer.tree.gitStatus[parentFile] != gitstatus.StatusModified {
+		t.Fatalf("parent file status = %v, want Modified", got.explorer.tree.gitStatus[parentFile])
+	}
+	if got.explorer.tree.gitStatus[childFile] != gitstatus.StatusAdded {
+		t.Fatalf("child file status = %v, want Added", got.explorer.tree.gitStatus[childFile])
+	}
+	if got.explorer.tree.gitStatus[nested] != gitstatus.StatusAdded {
+		t.Fatalf("nested summary = %v, want Added", got.explorer.tree.gitStatus[nested])
 	}
 }
 
@@ -94,10 +153,11 @@ func TestExplorerAppIgnoresStaleGitStatus(t *testing.T) {
 	m.gitStatusInFlight = true
 	model, _ := m.Update(gitStatusRefreshedMsg{
 		explorerRoot: rootA,
-		result: gitstatus.Result{
+		repoRoots:    []string{filepath.Clean(rootA)},
+		results: []gitstatus.Result{{
 			Root:  rootA,
 			Files: map[string]gitstatus.Status{fileA: gitstatus.StatusModified},
-		},
+		}},
 	})
 	got := model.(ExplorerAppModel)
 	if got.explorer.Root() != rootB {
@@ -115,8 +175,8 @@ func TestExplorerAppStandaloneLayoutUsesInsetBodyWidth(t *testing.T) {
 	if got.explorer.tree.width != 79 {
 		t.Fatalf("explorer width = %d, want 79", got.explorer.tree.width)
 	}
-	if got.explorer.tree.height != 23 {
-		t.Fatalf("explorer height = %d, want 23", got.explorer.tree.height)
+	if got.explorer.tree.height != 24 {
+		t.Fatalf("explorer height = %d, want 24", got.explorer.tree.height)
 	}
 }
 

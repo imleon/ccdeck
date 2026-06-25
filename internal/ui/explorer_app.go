@@ -27,8 +27,9 @@ type ExplorerAppModel struct {
 	width  int
 	height int
 
-	refreshInterval   time.Duration
-	gitStatusInFlight bool
+	refreshInterval    time.Duration
+	gitStatusInFlight  bool
+	gitStatusRepoRoots []string
 
 	showHelp   bool
 	status     string
@@ -73,8 +74,18 @@ func (m ExplorerAppModel) startGitStatusRefresh() (ExplorerAppModel, tea.Cmd) {
 	if root == "" || m.gitStatusInFlight {
 		return m, nil
 	}
+	repoRoots := m.gitStatusTargets()
 	m.gitStatusInFlight = true
-	return m, loadGitStatusCmd(root)
+	m.gitStatusRepoRoots = repoRoots
+	return m, loadGitStatusesCmd(root, repoRoots)
+}
+
+func (m ExplorerAppModel) gitStatusTargets() []string {
+	root := m.explorer.Root()
+	if root == "" {
+		return nil
+	}
+	return normalizeRepoRoots(append([]string{root}, m.explorer.VisibleGitRepoRoots()...))
 }
 
 func (m ExplorerAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -116,15 +127,15 @@ func (m ExplorerAppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m, cmd = m.startGitStatusRefresh()
 			return m, cmd
 		}
-		if msg.err != nil {
-			m.explorer = m.explorer.SetGitStatus(nil, "")
-			return m, nil
+		if !sameStrings(msg.repoRoots, m.gitStatusTargets()) {
+			var cmd tea.Cmd
+			m, cmd = m.startGitStatusRefresh()
+			return m, cmd
 		}
-		m.explorer = m.explorer.SetGitStatus(msg.result.Files, msg.result.Root)
+		m.explorer = m.explorer.SetGitStatusMap(mergeGitStatusResults(msg.explorerRoot, msg.results))
 		return m, nil
 	case explorerOpenFileMsg:
 		m.openedPath = msg.path
-		m.status = fmt.Sprintf("selected file: %s", msg.path)
 		return m, sendOpenFileCmd(m.openFileSender, msg.path, m.explorer.Root())
 	case ipcSetRootMsg:
 		return m.applyLinkedRoot(msg.path)
@@ -150,11 +161,12 @@ func (m ExplorerAppModel) applyLinkedRoot(path string) (tea.Model, tea.Cmd) {
 		return m, waitIPCCmd(m.ipcListener)
 	}
 	if filepath.Clean(path) == filepath.Clean(m.explorer.Root()) {
+		m.openedPath = ""
 		return m, waitIPCCmd(m.ipcListener)
 	}
 	m.explorer = m.explorer.SetRoot(path)
 	m.openedPath = ""
-	m.status = fmt.Sprintf("linked root: %s", path)
+	m.status = ""
 	var gitCmd tea.Cmd
 	m, gitCmd = m.startGitStatusRefresh()
 	return m, tea.Batch(waitIPCCmd(m.ipcListener), gitCmd)
@@ -164,8 +176,8 @@ func (m *ExplorerAppModel) layout() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	contentW, contentH := standalonePaddedContentSize(m.width, m.height, standaloneScrollbarBodyPadding)
-	m.explorer = m.explorer.SetSize(contentW, contentH)
+	contentW := paneContentWidth(m.width, standaloneScrollbarBodyPadding)
+	m.explorer = m.explorer.SetSize(contentW, max(m.height, 1))
 }
 
 func (m ExplorerAppModel) View() tea.View {
@@ -182,7 +194,7 @@ func (m ExplorerAppModel) render() string {
 	if m.showHelp {
 		return m.helpView()
 	}
-	return renderStandalonePanePadded(m.statusText(), m.explorer.View(m.openedPath), m.width, standaloneScrollbarBodyPadding)
+	return renderStandalonePanePadded(m.status, m.explorer.View(m.openedPath), m.width, standaloneScrollbarBodyPadding)
 }
 
 func (m ExplorerAppModel) helpView() string {
@@ -206,7 +218,7 @@ func (m ExplorerAppModel) statusText() string {
 		return m.status
 	}
 	if root := m.explorer.Root(); root != "" {
-		return root
+		return projectDirLabel(root)
 	}
 	return "waiting for active session"
 }

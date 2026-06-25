@@ -65,6 +65,21 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestSummarize(t *testing.T) {
+	if got := Summarize(nil); got != StatusNone {
+		t.Fatalf("empty summary = %v, want None", got)
+	}
+	if got := Summarize(map[string]Status{"a": StatusDeleted}); got != StatusDeleted {
+		t.Fatalf("single summary = %v, want Deleted", got)
+	}
+	if got := Summarize(map[string]Status{"a": StatusModified, "b": StatusUntracked}); got != StatusModified {
+		t.Fatalf("mixed summary = %v, want Modified", got)
+	}
+	if got := Summarize(map[string]Status{"a": StatusModified, "b": StatusConflict}); got != StatusConflict {
+		t.Fatalf("conflict summary = %v, want Conflict", got)
+	}
+}
+
 func TestAggregate(t *testing.T) {
 	root := "/repo"
 	files := map[string]Status{

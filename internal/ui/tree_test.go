@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,6 +28,33 @@ func treeCursorPath(m TreeModel) string {
 	return m.nodes[m.cursor].path
 }
 
+func TestTreeSetRootRendersRootAsExpandedDirectory(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(file, []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root)
+
+	if len(m.nodes) != 3 {
+		t.Fatalf("nodes = %v, want root plus two children", treeNodePaths(m))
+	}
+	if got := m.nodes[0]; got.path != root || !got.isDir || got.depth != 0 || !got.expanded {
+		t.Fatalf("root node = %+v, want expanded directory at depth 0", got)
+	}
+	if got := m.nodes[1]; got.path != sub || !got.isDir || got.depth != 1 {
+		t.Fatalf("first child = %+v, want sub directory at depth 1", got)
+	}
+	if got := m.nodes[2]; got.path != file || got.isDir || got.depth != 1 {
+		t.Fatalf("second child = %+v, want file at depth 1", got)
+	}
+}
+
 func TestTreeRefreshReflectsDiskAndPreservesState(t *testing.T) {
 	root := t.TempDir()
 	sub := filepath.Join(root, "sub")
@@ -42,12 +70,13 @@ func TestTreeRefreshReflectsDiskAndPreservesState(t *testing.T) {
 
 	m := NewTree().SetRoot(root).SetSize(40, 20)
 
-	// 展开 sub（光标在 index 0 = sub 目录），再把光标移到子文件 a.go。
+	// 展开 sub（index 0 = root, index 1 = sub），再把光标移到子文件 a.go。
+	m.cursor = 1
 	m = m.toggle()
-	if !m.nodes[0].expanded {
+	if !m.nodes[1].expanded {
 		t.Fatal("sub should be expanded after toggle")
 	}
-	m.cursor = 1 // sub/a.go
+	m.cursor = 2 // sub/a.go
 	if got := treeCursorPath(m); got != filepath.Join(sub, "a.go") {
 		t.Fatalf("cursor path = %q, want sub/a.go", got)
 	}
@@ -71,7 +100,7 @@ func TestTreeRefreshReflectsDiskAndPreservesState(t *testing.T) {
 	if !found {
 		t.Fatalf("refresh should surface new file %q, got %v", wantNew, paths)
 	}
-	if !m.nodes[0].expanded {
+	if !m.nodes[1].expanded {
 		t.Fatal("sub should stay expanded after refresh")
 	}
 	// 光标应仍指向 a.go。
@@ -90,7 +119,7 @@ func TestTreeRefreshHandlesDeletedCursorNode(t *testing.T) {
 	}
 
 	m := NewTree().SetRoot(root).SetSize(40, 20)
-	m.cursor = 1 // b.txt
+	m.cursor = 2 // b.txt
 	if got := treeCursorPath(m); got != filepath.Join(root, "b.txt") {
 		t.Fatalf("cursor path = %q, want b.txt", got)
 	}
@@ -101,8 +130,8 @@ func TestTreeRefreshHandlesDeletedCursorNode(t *testing.T) {
 	}
 	m = m.Refresh()
 
-	if len(m.nodes) != 1 {
-		t.Fatalf("expected 1 node after deletion, got %d", len(m.nodes))
+	if len(m.nodes) != 2 {
+		t.Fatalf("expected root plus 1 child after deletion, got %d", len(m.nodes))
 	}
 	if m.cursor < 0 || m.cursor >= len(m.nodes) {
 		t.Fatalf("cursor out of range after refresh: %d", m.cursor)
@@ -117,6 +146,55 @@ func TestTreeRefreshNoRootIsNoop(t *testing.T) {
 	m = m.Refresh()
 	if len(m.nodes) != 0 {
 		t.Fatalf("refresh without root should keep empty nodes, got %d", len(m.nodes))
+	}
+}
+
+func TestTreeRefreshPreservesCollapsedRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(40, 20)
+	m = m.toggle()
+	if len(m.nodes) != 1 || m.nodes[0].expanded {
+		t.Fatalf("root should be collapsed, got %+v", m.nodes)
+	}
+
+	m = m.Refresh()
+	if len(m.nodes) != 1 || m.nodes[0].path != root || m.nodes[0].expanded {
+		t.Fatalf("refresh should preserve collapsed root, got %+v", m.nodes)
+	}
+}
+
+func TestTreeLeftFromRootChildMovesToRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(40, 20)
+	m.cursor = 1
+	m = m.collapseOrMoveToParent()
+
+	if got := treeCursorPath(m); got != root {
+		t.Fatalf("cursor path after left = %q, want root", got)
+	}
+}
+
+func TestTreeEnterOnRootTogglesWithoutSelectingFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(40, 20)
+	m, cmd := m.Update(sessionsKey("enter"))
+	if cmd != nil {
+		t.Fatal("enter on root directory should not select a file")
+	}
+	if len(m.nodes) != 1 || m.nodes[0].expanded {
+		t.Fatalf("enter should collapse root, got %+v", m.nodes)
 	}
 }
 
@@ -137,6 +215,71 @@ func TestTreeSetRootClearsGitStatusOnRootChange(t *testing.T) {
 	m = m.SetRoot(rootB)
 	if len(m.gitStatus) != 0 {
 		t.Fatalf("git status should be cleared after root change, got %v", m.gitStatus)
+	}
+}
+
+func TestTreeVisibleGitRepoRootsDetectsGitDirAndFile(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "repo-dir")
+	repoFile := filepath.Join(root, "repo-file")
+	if err := os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repoFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoFile, ".git"), []byte("gitdir: ../meta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root)
+	got := m.VisibleGitRepoRoots()
+	want := []string{filepath.Clean(repoDir), filepath.Clean(repoFile)}
+	if !slices.Equal(got, want) {
+		t.Fatalf("visible git roots = %v, want %v", got, want)
+	}
+}
+
+func TestTreeVisibleGitRepoRootsOnlyChecksVisibleNodes(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	nested := filepath.Join(parent, "nested")
+	if err := os.MkdirAll(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root)
+	if got := m.VisibleGitRepoRoots(); len(got) != 0 {
+		t.Fatalf("collapsed nested git roots = %v, want none", got)
+	}
+	m.cursor = 1
+	m = m.toggle()
+	if got := m.VisibleGitRepoRoots(); !slices.Equal(got, []string{filepath.Clean(nested)}) {
+		t.Fatalf("expanded nested git roots = %v, want nested", got)
+	}
+}
+
+func TestTreeSetGitStatusMapInjectsNestedStatus(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	file := filepath.Join(nested, "a.go")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root)
+	m = m.SetGitStatusMap(map[string]gitstatus.Status{
+		nested: gitstatus.StatusModified,
+		file:   gitstatus.StatusModified,
+	})
+	if got := m.gitStatus[nested]; got != gitstatus.StatusModified {
+		t.Fatalf("nested status = %v, want Modified", got)
+	}
+	if got := m.gitStatus[file]; got != gitstatus.StatusModified {
+		t.Fatalf("file status = %v, want Modified", got)
 	}
 }
 
@@ -168,6 +311,114 @@ func TestTreeViewKeepsScrollbarGutterWhenContentFits(t *testing.T) {
 	line := strings.Split(got, "\n")[0]
 	if width := lipgloss.Width(line); width != 24 {
 		t.Fatalf("line width = %d, want 24: %q", width, line)
+	}
+}
+
+func TestTreeViewUsesActiveBackgroundForOpenedFile(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(file, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(24, 3)
+	m.cursor = -1
+	raw := m.View(file)
+	if raw == stripANSI(raw) || !strings.Contains(raw, "48;2;42;36;33") {
+		t.Fatalf("opened file should use active background\n%q", raw)
+	}
+}
+
+func TestTreeViewUsesContinuousActiveBackgroundForOpenedGitFile(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(file, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(24, 3)
+	m.cursor = -1
+	m = m.SetGitStatusMap(map[string]gitstatus.Status{file: gitstatus.StatusModified})
+	raw := m.View(file)
+	lines := strings.Split(raw, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected opened file line, got %q", raw)
+	}
+	fileLine := lines[1]
+	if !strings.Contains(fileLine, " M") {
+		t.Fatalf("opened file line should include git mark: %q", fileLine)
+	}
+	if strings.Contains(fileLine, "38;2;178") {
+		t.Fatalf("opened git file should not split active background with git color style: %q", fileLine)
+	}
+	if strings.Count(fileLine, "48;2;42;36;33") != 2 {
+		t.Fatalf("opened git file should have one active row span plus trailing fill, got %q", fileLine)
+	}
+}
+
+func TestTreeViewReservesGitMarkColumnForCleanRows(t *testing.T) {
+	root := t.TempDir()
+	cleanFile := filepath.Join(root, "clean-file-with-long-name.txt")
+	dirtyFile := filepath.Join(root, "dirty-file-with-long-name.txt")
+	if err := os.WriteFile(cleanFile, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dirtyFile, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(24, 4)
+	m = m.SetGitStatusMap(map[string]gitstatus.Status{dirtyFile: gitstatus.StatusModified})
+	lines := strings.Split(stripANSI(m.View("")), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected root and two file lines, got %q", lines)
+	}
+	cleanLine := lines[1]
+	dirtyLine := lines[2]
+	if strings.Contains(cleanLine, "clean-file-with-long-name") {
+		t.Fatalf("clean row should truncate before reserved git mark column: %q", cleanLine)
+	}
+	if strings.Contains(dirtyLine, "dirty-file-with-long-name") {
+		t.Fatalf("dirty row should truncate before git mark column: %q", dirtyLine)
+	}
+	idx := strings.LastIndex(dirtyLine, "M")
+	if idx == -1 {
+		t.Fatalf("dirty row should include git mark: %q", dirtyLine)
+	}
+	if markColumn := lipgloss.Width(dirtyLine[:idx]); markColumn != lipgloss.Width(cleanLine)-treeGitMarkColumnWidth-2 {
+		t.Fatalf("dirty mark should align with clean reserved column; clean=%q dirty=%q", cleanLine, dirtyLine)
+	}
+}
+
+func TestTreeViewUsesSelectedBackgroundForCursor(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(file, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(24, 3)
+	raw := m.View("")
+	if raw == stripANSI(raw) || !strings.Contains(raw, "48;2;74;58;50") {
+		t.Fatalf("cursor should use selected background\n%q", raw)
+	}
+}
+
+func TestTreeViewSelectedBackgroundWinsOverOpenedFile(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(file, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewTree().SetRoot(root).SetSize(24, 3)
+	m.cursor = 1
+	raw := m.View(file)
+	if raw == stripANSI(raw) || !strings.Contains(raw, "48;2;74;58;50") {
+		t.Fatalf("selected opened file should use selected background\n%q", raw)
+	}
+	if strings.Contains(raw, "48;2;42;36;33") {
+		t.Fatalf("selected opened file should not use active background\n%q", raw)
 	}
 }
 

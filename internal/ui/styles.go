@@ -43,6 +43,7 @@ var sessionSelectedBGColor = lipgloss.Color("#4a3a32")
 var sessionActiveBGColor = lipgloss.Color("#2a2421")
 
 var sessionSelectedGroupHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
 	Foreground(lipgloss.Color("254")).
 	Background(sessionSelectedBGColor).
 	Inline(true)
@@ -54,8 +55,10 @@ var sessionActiveGroupHeaderStyle = lipgloss.NewStyle().
 var sessionTitleStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("252"))
 
+var sessionSelectedTitleColor = lipgloss.Color("254")
+
 var sessionSelectedTitleStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("254")).
+	Foreground(sessionSelectedTitleColor).
 	Background(sessionSelectedBGColor).
 	Inline(true)
 
@@ -102,9 +105,19 @@ var sessionDescStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("244")).
 	Inline(true)
 
+var sessionSelectedActiveGuideStyle = lipgloss.NewStyle().
+	Foreground(sessionSelectedTitleColor).
+	Background(sessionSelectedBGColor).
+	Inline(true)
+
 var sessionSelectedDescStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("244")).
 	Background(sessionSelectedBGColor).
+	Inline(true)
+
+var sessionActiveGuideStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("180")).
+	Background(sessionActiveBGColor).
 	Inline(true)
 
 var sessionActiveDescStyle = lipgloss.NewStyle().
@@ -130,13 +143,12 @@ var helpBoxStyle = lipgloss.NewStyle().
 	BorderForeground(focusedBorderColor)
 
 var treeCursorStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("229")).
-	Background(lipgloss.Color("63")).
+	Foreground(lipgloss.Color("254")).
+	Background(sessionSelectedBGColor).
 	Inline(true)
 
 var treeOpenedFileStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("117")).
-	Bold(true).
+	Background(sessionActiveBGColor).
 	Inline(true)
 
 var treeGitModifiedStyle = lipgloss.NewStyle().

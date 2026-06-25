@@ -316,6 +316,31 @@ func classify(x, y byte) Status {
 	}
 }
 
+// Summarize returns one aggregate status for a set of files. A single kind of
+// descendant change keeps that status, multiple non-conflict kinds become
+// modified, and conflict dominates everything.
+func Summarize(files map[string]Status) Status {
+	seen := StatusNone
+	status := StatusNone
+	for _, st := range files {
+		if st == StatusNone {
+			continue
+		}
+		switch {
+		case status == StatusConflict:
+		case st == StatusConflict:
+			status = StatusConflict
+		case status == StatusModified:
+		case seen == StatusNone:
+			seen = st
+			status = st
+		case seen != st:
+			status = StatusModified
+		}
+	}
+	return status
+}
+
 // Aggregate folds file statuses up into their ancestor directories. Files keep
 // their exact git state. A directory with one kind of descendant change shows
 // that status, a directory with multiple non-conflict change kinds shows

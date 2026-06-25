@@ -59,12 +59,21 @@ func (m TreeModel) SetGitStatus(files map[string]gitstatus.Status, root string) 
 	return m
 }
 
+func (m TreeModel) SetGitStatusMap(status map[string]gitstatus.Status) TreeModel {
+	if len(status) == 0 {
+		m.gitStatus = nil
+		return m
+	}
+	m.gitStatus = maps.Clone(status)
+	return m
+}
+
 // Root returns the current tree root directory for titles/status display.
 func (m TreeModel) Root() string {
 	return m.root
 }
 
-// SetRoot 切换根目录并重建第一层。
+// SetRoot 切换根目录，并把根目录本身作为第一行。
 func (m TreeModel) SetRoot(dir string) TreeModel {
 	if filepath.Clean(dir) != filepath.Clean(m.root) {
 		m.gitStatus = nil
@@ -72,7 +81,7 @@ func (m TreeModel) SetRoot(dir string) TreeModel {
 	m.root = dir
 	m.cursor = 0
 	m.offset = 0
-	m.nodes = readDir(dir, 0)
+	m.nodes = buildVisibleNodes(dir, 0, map[string]bool{dir: true})
 	return m
 }
 
@@ -110,22 +119,31 @@ func (m TreeModel) Refresh() TreeModel {
 	return m.clampScroll()
 }
 
-// buildVisibleNodes 从 dir 递归构建可见的扁平节点列表：目录默认折叠，
-// 仅当其 path 在 expanded 集合中时展开并递归其子项。
+// buildVisibleNodes 从 dir 递归构建可见的扁平节点列表：包含 dir 自身，
+// 目录仅当其 path 在 expanded 集合中时展开并递归其子项。
 func buildVisibleNodes(dir string, depth int, expanded map[string]bool) []treeNode {
-	nodes := readDir(dir, depth)
-	if len(expanded) == 0 {
-		return nodes
+	cleanDir := filepath.Clean(dir)
+	name := filepath.Base(cleanDir)
+	if name == "." || name == string(filepath.Separator) {
+		name = cleanDir
 	}
-	result := make([]treeNode, 0, len(nodes))
-	for _, n := range nodes {
-		if n.isDir && expanded[n.path] {
-			n.expanded = true
-			result = append(result, n)
-			result = append(result, buildVisibleNodes(n.path, depth+1, expanded)...)
+	node := treeNode{
+		name:     name,
+		path:     dir,
+		isDir:    true,
+		depth:    depth,
+		expanded: expanded[dir],
+	}
+	result := []treeNode{node}
+	if !node.expanded {
+		return result
+	}
+	for _, child := range readDir(dir, depth+1) {
+		if child.isDir {
+			result = append(result, buildVisibleNodes(child.path, depth+1, expanded)...)
 			continue
 		}
-		result = append(result, n)
+		result = append(result, child)
 	}
 	return result
 }
@@ -135,6 +153,27 @@ func (m TreeModel) SetSize(w, h int) TreeModel {
 	m.width = w
 	m.height = h
 	return m
+}
+
+func (m TreeModel) VisibleGitRepoRoots() []string {
+	roots := make(map[string]struct{})
+	for _, n := range m.nodes {
+		if !n.isDir || !hasGitMarker(n.path) {
+			continue
+		}
+		roots[filepath.Clean(n.path)] = struct{}{}
+	}
+	result := make([]string, 0, len(roots))
+	for root := range roots {
+		result = append(result, root)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func hasGitMarker(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 // readDir 读取一个目录的直接子项，返回排序后的节点（目录在前）。
@@ -172,10 +211,11 @@ const (
 	treeIconModeNerd  treeIconMode = "nerd"
 	treeIconModeASCII treeIconMode = "ascii"
 
-	currentTreeIconMode = treeIconModeNerd
-	treeIndentWidth     = 2
-	treeTwistyWidth     = 2
-	treeIconWidth       = 2
+	currentTreeIconMode    = treeIconModeNerd
+	treeIndentWidth        = 2
+	treeTwistyWidth        = 2
+	treeIconWidth          = 2
+	treeGitMarkColumnWidth = 2
 )
 
 type treeIconKind string
@@ -494,17 +534,35 @@ func (m TreeModel) View(openedPath string) string {
 	}
 	end := min(m.offset+m.height, len(m.nodes))
 	lines := make([]string, 0, end-m.offset)
+	selectedRows := make([]bool, 0, end-m.offset)
+	activeRows := make([]bool, 0, end-m.offset)
 	for i := m.offset; i < end; i++ {
 		n := m.nodes[i]
 		isCursor := i == m.cursor
 		isOpened := cleanOpenedPath != "" && !n.isDir && filepath.Clean(n.path) == cleanOpenedPath
 		lines = append(lines, m.renderLine(n, bodyWidth, isCursor, isOpened))
+		selectedRows = append(selectedRows, isCursor)
+		activeRows = append(activeRows, isOpened && !isCursor)
 	}
 	scrollbar := renderTreeScrollbar(m.height, len(m.nodes), m.offset, scrollbarWidth)
+	scrollbarTail := renderTreeScrollbar(m.height, len(m.nodes), m.offset, 1)
 	for i, line := range lines {
 		bar := strings.Repeat(" ", scrollbarWidth)
 		if i < len(scrollbar) {
 			bar = scrollbar[i]
+		}
+		if selectedRows[i] {
+			tail := " "
+			if i < len(scrollbarTail) {
+				tail = scrollbarTail[i]
+			}
+			bar = sessionSelectedTrailingFillStyle.Render(" ") + tail
+		} else if activeRows[i] {
+			tail := " "
+			if i < len(scrollbarTail) {
+				tail = scrollbarTail[i]
+			}
+			bar = sessionActiveTrailingFillStyle.Render(" ") + tail
 		}
 		lines[i] = padCell(truncateCell(line, bodyWidth), bodyWidth) + bar
 	}
@@ -528,16 +586,13 @@ func (m TreeModel) renderLine(n treeNode, bodyWidth int, isCursor, isOpened bool
 	mark := status.Mark()
 
 	prefix := treeLinePrefix(n)
-	nameWidth := width - lipgloss.Width(prefix)
-	if mark != "" {
-		nameWidth -= lipgloss.Width(mark) + 1
-	}
+	nameWidth := width - lipgloss.Width(prefix) - treeGitMarkColumnWidth
 	if nameWidth < 1 {
 		nameWidth = 1
 	}
 
 	name := truncateCell(n.name, nameWidth)
-	if style, ok := treeGitStyle(status); ok && !isCursor {
+	if style, ok := treeGitStyle(status); ok && !isCursor && !isOpened {
 		name = style.Render(name)
 	}
 	line := prefix + name
@@ -548,19 +603,19 @@ func (m TreeModel) renderLine(n treeNode, bodyWidth int, isCursor, isOpened bool
 			padding = 1
 		}
 		badge := mark
-		if style, ok := treeGitStyle(status); ok && !isCursor {
+		if style, ok := treeGitStyle(status); ok && !isCursor && !isOpened {
 			badge = style.Render(mark)
 		}
 		line += strings.Repeat(" ", padding) + badge
 	}
-	line = " " + line
+	line = padCell(truncateCell(line, bodyWidth), bodyWidth)
 	if isCursor {
-		return treeCursorStyle.Render(truncateCell(line, bodyWidth))
+		return treeCursorStyle.Render(line)
 	}
 	if isOpened {
-		return treeOpenedFileStyle.Render(truncateCell(line, bodyWidth))
+		return treeOpenedFileStyle.Render(line)
 	}
-	return truncateCell(line, bodyWidth)
+	return line
 }
 
 func (m TreeModel) nodeStatus(n treeNode) gitstatus.Status {

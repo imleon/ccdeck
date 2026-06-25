@@ -35,6 +35,15 @@ func (m ExplorerModel) SetGitStatus(files map[string]gitstatus.Status, root stri
 	return m
 }
 
+func (m ExplorerModel) SetGitStatusMap(status map[string]gitstatus.Status) ExplorerModel {
+	m.tree = m.tree.SetGitStatusMap(status)
+	return m
+}
+
+func (m ExplorerModel) VisibleGitRepoRoots() []string {
+	return m.tree.VisibleGitRepoRoots()
+}
+
 func (m ExplorerModel) Refresh() ExplorerModel {
 	m.tree = m.tree.Refresh()
 	return m

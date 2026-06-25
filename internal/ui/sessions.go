@@ -900,11 +900,13 @@ func renderSessionReservedSubtitleLine(width int, selected, active bool) string 
 	if width <= 0 {
 		return ""
 	}
+	prefix := sessionRowPrefix(active)
+	prefixWidth := lipgloss.Width(prefix)
 	if selected {
-		return sessionSelectedFillStyle.Render(strings.Repeat(" ", width))
+		return sessionSelectedFillStyle.Render(prefix + strings.Repeat(" ", max(width-prefixWidth, 0)))
 	}
 	if active {
-		return sessionActiveFillStyle.Render(strings.Repeat(" ", width))
+		return renderActiveSessionPrefix(prefix) + sessionActiveFillStyle.Render(strings.Repeat(" ", max(width-prefixWidth, 0)))
 	}
 	return strings.Repeat(" ", width)
 }
@@ -924,11 +926,45 @@ func renderSessionSubtitleLine(subtitle, age string, width int, selected, active
 		return fillStyle.Render(strings.Repeat(" ", width))
 	}
 	leftWidth := width - ageWidth
-	left := padCell(truncateCell(sessionRowPrefix(false)+subtitle, leftWidth), leftWidth)
-	return descStyle.Render(left) + fillStyle.Render(strings.Repeat(" ", ageWidth))
+	prefix := sessionRowPrefix(active)
+	prefixWidth := lipgloss.Width(prefix)
+	textWidth := max(leftWidth-prefixWidth, 0)
+	text := padCell(truncateCell(subtitle, textWidth), textWidth)
+	left := renderSubtitlePrefix(prefix, selected, active) + descStyle.Render(text)
+	return left + fillStyle.Render(strings.Repeat(" ", ageWidth))
 }
 
-func sessionRowPrefix(_ bool) string {
+func renderSubtitlePrefix(prefix string, selected, active bool) string {
+	if active && selected {
+		return renderSelectedActiveSessionPrefix(prefix)
+	}
+	if active {
+		return renderActiveSessionPrefix(prefix)
+	}
+	if selected {
+		return sessionSelectedDescStyle.Render(prefix)
+	}
+	return sessionDescStyle.Render(prefix)
+}
+
+func renderSelectedActiveSessionPrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	return sessionSelectedActiveGuideStyle.Render(takeCellPrefix(prefix, 1)) + sessionSelectedFillStyle.Render(takeCellSuffix(prefix, max(lipgloss.Width(prefix)-1, 0)))
+}
+
+func renderActiveSessionPrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	return sessionActiveGuideStyle.Render(takeCellPrefix(prefix, 1)) + sessionActiveFillStyle.Render(takeCellSuffix(prefix, max(lipgloss.Width(prefix)-1, 0)))
+}
+
+func sessionRowPrefix(active bool) string {
+	if active {
+		return "│ "
+	}
 	return "  "
 }
 
