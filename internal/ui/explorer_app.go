@@ -157,7 +157,7 @@ func (m ExplorerAppModel) applyLinkedRoot(path string) (tea.Model, tea.Cmd) {
 	}
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
-		m.status = fmt.Sprintf("linked root unavailable: %s", path)
+		m.status = fmt.Sprintf("project dir unavailable: %s", path)
 		return m, waitIPCCmd(m.ipcListener)
 	}
 	if filepath.Clean(path) == filepath.Clean(m.explorer.Root()) {

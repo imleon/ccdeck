@@ -963,7 +963,7 @@ func renderActiveSessionPrefix(prefix string) string {
 
 func sessionRowPrefix(active bool) string {
 	if active {
-		return "│ "
+		return "┃ "
 	}
 	return "  "
 }

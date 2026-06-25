@@ -581,12 +581,11 @@ func renderTreeScrollbar(viewportHeight, totalHeight, topOffset, width int) []st
 }
 
 func (m TreeModel) renderLine(n treeNode, bodyWidth int, isCursor, isOpened bool) string {
-	width := max(bodyWidth-1, 1)
 	status := m.nodeStatus(n)
 	mark := status.Mark()
 
 	prefix := treeLinePrefix(n)
-	nameWidth := width - lipgloss.Width(prefix) - treeGitMarkColumnWidth
+	nameWidth := bodyWidth - lipgloss.Width(prefix) - treeGitMarkColumnWidth
 	if nameWidth < 1 {
 		nameWidth = 1
 	}
@@ -598,7 +597,7 @@ func (m TreeModel) renderLine(n treeNode, bodyWidth int, isCursor, isOpened bool
 	line := prefix + name
 	if mark != "" {
 		plainWidth := lipgloss.Width(prefix) + lipgloss.Width(truncateCell(n.name, nameWidth))
-		padding := width - plainWidth - lipgloss.Width(mark)
+		padding := bodyWidth - plainWidth - lipgloss.Width(mark)
 		if padding < 1 {
 			padding = 1
 		}
@@ -609,11 +608,16 @@ func (m TreeModel) renderLine(n treeNode, bodyWidth int, isCursor, isOpened bool
 		line += strings.Repeat(" ", padding) + badge
 	}
 	line = padCell(truncateCell(line, bodyWidth), bodyWidth)
+
+	if isOpened {
+		body := takeCellSuffix(line, max(bodyWidth-1, 0))
+		if isCursor {
+			return treeSelectedOpenedFileGuideStyle.Render("┃") + treeCursorStyle.Render(body)
+		}
+		return treeOpenedFileGuideStyle.Render("┃") + treeOpenedFileStyle.Render(body)
+	}
 	if isCursor {
 		return treeCursorStyle.Render(line)
-	}
-	if isOpened {
-		return treeOpenedFileStyle.Render(line)
 	}
 	return line
 }

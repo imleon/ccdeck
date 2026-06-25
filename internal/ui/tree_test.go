@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,12 @@ import (
 
 	"ccdeck/internal/gitstatus"
 )
+
+var treeANSIEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripTreeANSI(s string) string {
+	return treeANSIEscapeRE.ReplaceAllString(s, "")
+}
 
 // treeNodePaths 返回当前可见节点的 path 列表，便于断言。
 func treeNodePaths(m TreeModel) []string {
@@ -324,8 +331,15 @@ func TestTreeViewUsesActiveBackgroundForOpenedFile(t *testing.T) {
 	m := NewTree().SetRoot(root).SetSize(24, 3)
 	m.cursor = -1
 	raw := m.View(file)
-	if raw == stripANSI(raw) || !strings.Contains(raw, "48;2;42;36;33") {
+	if raw == stripTreeANSI(raw) || !strings.Contains(raw, "48;2;42;36;33") {
 		t.Fatalf("opened file should use active background\n%q", raw)
+	}
+	lines := strings.Split(stripTreeANSI(raw), "\n")
+	if len(lines) < 2 || !strings.HasPrefix(lines[1], "┃") {
+		t.Fatalf("opened file should render left guide, got %q", lines)
+	}
+	if width := lipgloss.Width(lines[1]); width != 24 {
+		t.Fatalf("opened file line width = %d, want 24: %q", width, lines[1])
 	}
 }
 
@@ -351,8 +365,14 @@ func TestTreeViewUsesContinuousActiveBackgroundForOpenedGitFile(t *testing.T) {
 	if strings.Contains(fileLine, "38;2;178") {
 		t.Fatalf("opened git file should not split active background with git color style: %q", fileLine)
 	}
-	if strings.Count(fileLine, "48;2;42;36;33") != 2 {
-		t.Fatalf("opened git file should have one active row span plus trailing fill, got %q", fileLine)
+	if strings.Count(fileLine, "48;2;42;36;33") < 2 {
+		t.Fatalf("opened git file should keep active background across the row, got %q", fileLine)
+	}
+	if !strings.HasPrefix(stripTreeANSI(fileLine), "┃") {
+		t.Fatalf("opened git file should render left guide, got %q", stripTreeANSI(fileLine))
+	}
+	if width := lipgloss.Width(stripTreeANSI(fileLine)); width != 24 {
+		t.Fatalf("opened git file line width = %d, want 24: %q", width, stripTreeANSI(fileLine))
 	}
 }
 
@@ -385,7 +405,7 @@ func TestTreeViewReservesGitMarkColumnForCleanRows(t *testing.T) {
 	if idx == -1 {
 		t.Fatalf("dirty row should include git mark: %q", dirtyLine)
 	}
-	if markColumn := lipgloss.Width(dirtyLine[:idx]); markColumn != lipgloss.Width(cleanLine)-treeGitMarkColumnWidth-2 {
+	if markColumn := lipgloss.Width(dirtyLine[:idx]); markColumn != lipgloss.Width(cleanLine)-treeGitMarkColumnWidth-1 {
 		t.Fatalf("dirty mark should align with clean reserved column; clean=%q dirty=%q", cleanLine, dirtyLine)
 	}
 }
@@ -419,6 +439,10 @@ func TestTreeViewSelectedBackgroundWinsOverOpenedFile(t *testing.T) {
 	}
 	if strings.Contains(raw, "48;2;42;36;33") {
 		t.Fatalf("selected opened file should not use active background\n%q", raw)
+	}
+	lines := strings.Split(stripTreeANSI(raw), "\n")
+	if len(lines) < 2 || !strings.HasPrefix(lines[1], "┃") {
+		t.Fatalf("selected opened file should keep left guide, got %q", lines)
 	}
 }
 

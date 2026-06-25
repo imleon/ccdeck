@@ -137,7 +137,7 @@ func TestRenderActiveSessionTitleLineKeepsAgeWhenNarrow(t *testing.T) {
 	if width := lipgloss.Width(plain); width > 8 {
 		t.Fatalf("active title line width = %d, want <= 8: %q", width, plain)
 	}
-	if !strings.HasPrefix(plain, "│") {
+	if !strings.HasPrefix(plain, "┃") {
 		t.Fatalf("active title line should render left guide, got %q", plain)
 	}
 	if !strings.HasSuffix(plain, "15D") {
@@ -190,7 +190,7 @@ func TestRenderSessionSubtitleLineUsesActiveGuideOnlyWhenActive(t *testing.T) {
 
 	activeLine := renderSessionSubtitleLine("a very long active session subtitle", "15D", 14, false, true)
 	activePlain := stripANSI(activeLine)
-	if !strings.HasPrefix(activePlain, "│") {
+	if !strings.HasPrefix(activePlain, "┃") {
 		t.Fatalf("active subtitle line should render left guide, got %q", activePlain)
 	}
 	if strings.Contains(activePlain, "15D") {
@@ -242,7 +242,7 @@ func TestSessionActiveAndSelectedStylePrecedence(t *testing.T) {
 	if selected == active {
 		t.Fatal("selected and active title styles should differ")
 	}
-	if stripANSI(both) == stripANSI(selected) || !strings.HasPrefix(stripANSI(both), "│") {
+	if stripANSI(both) == stripANSI(selected) || !strings.HasPrefix(stripANSI(both), "┃") {
 		t.Fatalf("selected active row should keep active guide with selected styling, got %q", stripANSI(both))
 	}
 

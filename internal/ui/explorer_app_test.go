@@ -85,6 +85,19 @@ func TestExplorerAppOpenFileWithSenderReturnsCommand(t *testing.T) {
 	}
 }
 
+func TestExplorerAppLinkedRootUnavailableShowsPath(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-project-dir")
+	m := NewExplorerApp(ExplorerAppOptions{GroupName: "dev", RefreshInterval: time.Hour})
+	model, cmd := m.Update(ipcSetRootMsg{path: missing, sessionID: "abc"})
+	got := model.(ExplorerAppModel)
+	if got.statusText() != "project dir unavailable: "+missing {
+		t.Fatalf("status = %q, want %q", got.statusText(), "project dir unavailable: "+missing)
+	}
+	if cmd != nil {
+		t.Fatal("unavailable linked root should not schedule IPC wait without a listener")
+	}
+}
+
 func TestExplorerAppAppliesGitStatusForCurrentRoot(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "a.go")

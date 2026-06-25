@@ -151,6 +151,16 @@ var treeOpenedFileStyle = lipgloss.NewStyle().
 	Background(sessionActiveBGColor).
 	Inline(true)
 
+var treeOpenedFileGuideStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("180")).
+	Background(sessionActiveBGColor).
+	Inline(true)
+
+var treeSelectedOpenedFileGuideStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("255")).
+	Background(sessionSelectedBGColor).
+	Inline(true)
+
 var treeGitModifiedStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("178")).
 	Inline(true)
